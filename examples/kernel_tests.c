@@ -1,12 +1,8 @@
 /**
  * @file kernel_tests.c
- * @brief 全面内核测试 - 测试所有预置内核
+ * @brief 内核测试 - 用户定义内核示例
  * 
- * 测试分类：
- * 1. 向量运算：add, sub, mul, scale
- * 2. 激活函数：relu, sigmoid, tanh
- * 3. 数学函数：abs, sqrt, exp, log, square
- * 4. 数据操作：fill, copy, negate
+ * 展示用户如何使用 ACE_KERNEL 宏定义自己的内核
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,111 +11,78 @@
 #include "ace.h"
 
 /* ============================================================================
- * 内核定义
+ * 用户定义内核示例
  * ============================================================================ */
 
-ACE_KERNEL(vec_add,
-    void vec_add(int n, T* a, T* b, T* c) {
+/* 向量加法 */
+ACE_KERNEL(my_vec_add,
+    void my_vec_add(int n, T* a, T* b, T* c) {
         int i = GID;
         if (i < n) c[i] = a[i] + b[i];
     }
 );
 
-ACE_KERNEL(vec_sub,
-    void vec_sub(int n, T* a, T* b, T* c) {
-        int i = GID;
-        if (i < n) c[i] = a[i] - b[i];
-    }
-);
-
-ACE_KERNEL(vec_mul,
-    void vec_mul(int n, T* a, T* b, T* c) {
+/* 向量乘法 */
+ACE_KERNEL(my_vec_mul,
+    void my_vec_mul(int n, T* a, T* b, T* c) {
         int i = GID;
         if (i < n) c[i] = a[i] * b[i];
     }
 );
 
-ACE_KERNEL(scale,
-    void scale(int n, T alpha, T* in, T* out) {
+/* 缩放 */
+ACE_KERNEL(my_scale,
+    void my_scale(int n, T alpha, T* in, T* out) {
         int i = GID;
         if (i < n) out[i] = in[i] * alpha;
     }
 );
 
-ACE_KERNEL(relu,
-    void relu(int n, T* in, T* out) {
+/* ReLU 激活 */
+ACE_KERNEL(my_relu,
+    void my_relu(int n, T* in, T* out) {
         int i = GID;
         if (i < n) out[i] = in[i] > 0 ? in[i] : 0;
     }
 );
 
-ACE_KERNEL(sigmoid,
-    void sigmoid(int n, T* in, T* out) {
+/* Sigmoid 激活 */
+ACE_KERNEL(my_sigmoid,
+    void my_sigmoid(int n, T* in, T* out) {
         int i = GID;
         if (i < n) out[i] = 1.0 / (1.0 + exp(-in[i]));
     }
 );
 
-ACE_KERNEL(tanh_kernel,
-    void tanh_kernel(int n, T* in, T* out) {
-        int i = GID;
-        if (i < n) out[i] = tanh(in[i]);
-    }
-);
-
-ACE_KERNEL(abs_kernel,
-    void abs_kernel(int n, T* in, T* out) {
+/* 绝对值 */
+ACE_KERNEL(my_abs,
+    void my_abs(int n, T* in, T* out) {
         int i = GID;
         if (i < n) out[i] = in[i] < 0 ? -in[i] : in[i];
     }
 );
 
-ACE_KERNEL(sqrt_kernel,
-    void sqrt_kernel(int n, T* in, T* out) {
-        int i = GID;
-        if (i < n) out[i] = sqrt(in[i]);
-    }
-);
-
-ACE_KERNEL(exp_kernel,
-    void exp_kernel(int n, T* in, T* out) {
-        int i = GID;
-        if (i < n) out[i] = exp(in[i]);
-    }
-);
-
-ACE_KERNEL(log_kernel,
-    void log_kernel(int n, T* in, T* out) {
-        int i = GID;
-        if (i < n) out[i] = log(in[i]);
-    }
-);
-
-ACE_KERNEL(square,
-    void square(int n, T* in, T* out) {
+/* 平方 */
+ACE_KERNEL(my_square,
+    void my_square(int n, T* in, T* out) {
         int i = GID;
         if (i < n) out[i] = in[i] * in[i];
     }
 );
 
-ACE_KERNEL(fill,
-    void fill(int n, T val, T* out) {
+/* 填充常数 */
+ACE_KERNEL(my_fill,
+    void my_fill(int n, T val, T* out) {
         int i = GID;
         if (i < n) out[i] = val;
     }
 );
 
-ACE_KERNEL(copy,
-    void copy(int n, T* in, T* out) {
+/* 拷贝 */
+ACE_KERNEL(my_copy,
+    void my_copy(int n, T* in, T* out) {
         int i = GID;
         if (i < n) out[i] = in[i];
-    }
-);
-
-ACE_KERNEL(negate,
-    void negate(int n, T* in, T* out) {
-        int i = GID;
-        if (i < n) out[i] = -in[i];
     }
 );
 
@@ -145,14 +108,13 @@ static int g_total = 0;
 } while(0)
 
 /* ============================================================================
- * 测试函数（统一使用 N=20，快速测试）
+ * 测试函数
  * ============================================================================ */
 
 static int test_vec_add(ace_device_t dev) {
     const int N = 20;
-    float a[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
-    float b[] = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38};
-    float c[N];
+    float a[N], b[N], c[N];
+    for (int i = 0; i < N; i++) { a[i] = i; b[i] = i * 2; }
     
     ace_buffer_t ba, bb, bc;
     ace_buffer_alloc(dev, N * sizeof(float), &ba);
@@ -166,37 +128,11 @@ static int test_vec_add(ace_device_t dev) {
     void* args[] = {&n, ba, bb, bc};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_kernel_invoke(dev, _ace_get_my_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
     ace_finish(dev);
     ace_buffer_read(bc, c, N * sizeof(float));
     
     for (int i = 0; i < 10; i++) ASSERT_NEAR(c[i], a[i] + b[i], 1e-5f);
-    
-    ace_buffer_free(ba); ace_buffer_free(bb); ace_buffer_free(bc);
-    return 1;
-}
-
-static int test_vec_sub(ace_device_t dev) {
-    const int N = 20;
-    float a[N], b[N], c[N];
-    for (int i = 0; i < N; i++) { a[i] = i * 3.0f; b[i] = i; }
-    
-    ace_buffer_t ba, bb, bc;
-    ace_buffer_alloc(dev, N * sizeof(float), &ba);
-    ace_buffer_alloc(dev, N * sizeof(float), &bb);
-    ace_buffer_alloc(dev, N * sizeof(float), &bc);
-    ace_buffer_write(ba, a, N * sizeof(float));
-    ace_buffer_write(bb, b, N * sizeof(float));
-    
-    int n = N;
-    void* args[] = {&n, ba, bb, bc};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-    
-    ace_kernel_invoke(dev, _ace_get_vec_sub(), ACE_DTYPE_FLOAT32, N, args, types, 4);
-    ace_finish(dev);
-    ace_buffer_read(bc, c, N * sizeof(float));
-    
-    for (int i = 0; i < 10; i++) ASSERT_NEAR(c[i], a[i] - b[i], 1e-5f);
     
     ace_buffer_free(ba); ace_buffer_free(bb); ace_buffer_free(bc);
     return 1;
@@ -218,7 +154,7 @@ static int test_vec_mul(ace_device_t dev) {
     void* args[] = {&n, ba, bb, bc};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_vec_mul(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_kernel_invoke(dev, _ace_get_my_vec_mul(), ACE_DTYPE_FLOAT32, N, args, types, 4);
     ace_finish(dev);
     ace_buffer_read(bc, c, N * sizeof(float));
     
@@ -242,7 +178,7 @@ static int test_scale(ace_device_t dev) {
     void* args[] = {&n, &alpha, bin, bout};
     int types[] = {ACE_VAL, ACE_VAL, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_scale(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_kernel_invoke(dev, _ace_get_my_scale(), ACE_DTYPE_FLOAT32, N, args, types, 4);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -267,7 +203,7 @@ static int test_relu(ace_device_t dev) {
     void* args[] = {&n, bin, bout};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_relu(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_relu(), ACE_DTYPE_FLOAT32, N, args, types, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -292,32 +228,7 @@ static int test_sigmoid(ace_device_t dev) {
     void* args[] = {&n, bin, bout};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_sigmoid(), ACE_DTYPE_FLOAT32, N, args, types, 3);
-    ace_finish(dev);
-    ace_buffer_read(bout, out, N * sizeof(float));
-    
-    for (int i = 0; i < N; i++) ASSERT_NEAR(out[i], expected[i], 0.01f);
-    
-    ace_buffer_free(bin); ace_buffer_free(bout);
-    return 1;
-}
-
-static int test_tanh(ace_device_t dev) {
-    const int N = 5;
-    float in[] = {-2, -1, 0, 1, 2};
-    float expected[] = {-0.9640, -0.7616, 0, 0.7616, 0.9640};
-    float out[N];
-    
-    ace_buffer_t bin, bout;
-    ace_buffer_alloc(dev, N * sizeof(float), &bin);
-    ace_buffer_alloc(dev, N * sizeof(float), &bout);
-    ace_buffer_write(bin, in, N * sizeof(float));
-    
-    int n = N;
-    void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
-    
-    ace_kernel_invoke(dev, _ace_get_tanh_kernel(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_sigmoid(), ACE_DTYPE_FLOAT32, N, args, types, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -342,86 +253,11 @@ static int test_abs(ace_device_t dev) {
     void* args[] = {&n, bin, bout};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_abs_kernel(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_abs(), ACE_DTYPE_FLOAT32, N, args, types, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
     for (int i = 0; i < N; i++) ASSERT_NEAR(out[i], expected[i], 1e-5f);
-    
-    ace_buffer_free(bin); ace_buffer_free(bout);
-    return 1;
-}
-
-static int test_sqrt(ace_device_t dev) {
-    const int N = 10;
-    float in[] = {0, 1, 4, 9, 16, 25, 36, 49, 64, 81};
-    float expected[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-    float out[N];
-    
-    ace_buffer_t bin, bout;
-    ace_buffer_alloc(dev, N * sizeof(float), &bin);
-    ace_buffer_alloc(dev, N * sizeof(float), &bout);
-    ace_buffer_write(bin, in, N * sizeof(float));
-    
-    int n = N;
-    void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
-    
-    ace_kernel_invoke(dev, _ace_get_sqrt_kernel(), ACE_DTYPE_FLOAT32, N, args, types, 3);
-    ace_finish(dev);
-    ace_buffer_read(bout, out, N * sizeof(float));
-    
-    for (int i = 0; i < N; i++) ASSERT_NEAR(out[i], expected[i], 1e-5f);
-    
-    ace_buffer_free(bin); ace_buffer_free(bout);
-    return 1;
-}
-
-static int test_exp(ace_device_t dev) {
-    const int N = 5;
-    float in[] = {0, 1, 2, 3, 4};
-    float expected[] = {1, 2.7183, 7.3891, 20.0855, 54.5982};
-    float out[N];
-    
-    ace_buffer_t bin, bout;
-    ace_buffer_alloc(dev, N * sizeof(float), &bin);
-    ace_buffer_alloc(dev, N * sizeof(float), &bout);
-    ace_buffer_write(bin, in, N * sizeof(float));
-    
-    int n = N;
-    void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
-    
-    ace_kernel_invoke(dev, _ace_get_exp_kernel(), ACE_DTYPE_FLOAT32, N, args, types, 3);
-    ace_finish(dev);
-    ace_buffer_read(bout, out, N * sizeof(float));
-    
-    for (int i = 0; i < N; i++) ASSERT_NEAR(out[i], expected[i], 0.1f);
-    
-    ace_buffer_free(bin); ace_buffer_free(bout);
-    return 1;
-}
-
-static int test_log(ace_device_t dev) {
-    const int N = 5;
-    float in[] = {1, 2.7183, 7.3891, 20.0855, 54.5982};
-    float expected[] = {0, 1, 2, 3, 4};
-    float out[N];
-    
-    ace_buffer_t bin, bout;
-    ace_buffer_alloc(dev, N * sizeof(float), &bin);
-    ace_buffer_alloc(dev, N * sizeof(float), &bout);
-    ace_buffer_write(bin, in, N * sizeof(float));
-    
-    int n = N;
-    void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
-    
-    ace_kernel_invoke(dev, _ace_get_log_kernel(), ACE_DTYPE_FLOAT32, N, args, types, 3);
-    ace_finish(dev);
-    ace_buffer_read(bout, out, N * sizeof(float));
-    
-    for (int i = 0; i < N; i++) ASSERT_NEAR(out[i], expected[i], 0.1f);
     
     ace_buffer_free(bin); ace_buffer_free(bout);
     return 1;
@@ -442,7 +278,7 @@ static int test_square(ace_device_t dev) {
     void* args[] = {&n, bin, bout};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_square(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_square(), ACE_DTYPE_FLOAT32, N, args, types, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -463,7 +299,7 @@ static int test_fill(ace_device_t dev) {
     void* args[] = {&n, &val, bout};
     int types[] = {ACE_VAL, ACE_VAL, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_fill(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_fill(), ACE_DTYPE_FLOAT32, N, args, types, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -487,36 +323,11 @@ static int test_copy(ace_device_t dev) {
     void* args[] = {&n, bin, bout};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
     
-    ace_kernel_invoke(dev, _ace_get_copy(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_copy(), ACE_DTYPE_FLOAT32, N, args, types, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
     for (int i = 0; i < N; i++) ASSERT_NEAR(out[i], in[i], 1e-5f);
-    
-    ace_buffer_free(bin); ace_buffer_free(bout);
-    return 1;
-}
-
-static int test_negate(ace_device_t dev) {
-    const int N = 10;
-    float in[] = {-5, -2, 0, 2, 5, -10, 10, -1, 1, 0};
-    float expected[] = {5, 2, 0, -2, -5, 10, -10, 1, -1, 0};
-    float out[N];
-    
-    ace_buffer_t bin, bout;
-    ace_buffer_alloc(dev, N * sizeof(float), &bin);
-    ace_buffer_alloc(dev, N * sizeof(float), &bout);
-    ace_buffer_write(bin, in, N * sizeof(float));
-    
-    int n = N;
-    void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
-    
-    ace_kernel_invoke(dev, _ace_get_negate(), ACE_DTYPE_FLOAT32, N, args, types, 3);
-    ace_finish(dev);
-    ace_buffer_read(bout, out, N * sizeof(float));
-    
-    for (int i = 0; i < N; i++) ASSERT_NEAR(out[i], expected[i], 1e-5f);
     
     ace_buffer_free(bin); ace_buffer_free(bout);
     return 1;
@@ -540,28 +351,16 @@ static void test_device(const char* name, ace_device_type_t type, int idx) {
     printf(" %s: %s\n", name, props.name);
     printf("========================================\n");
     
-    printf("Vector Ops:\n");
+    printf("User Kernels:\n");
     RUN_TEST(test_vec_add, dev, "vec_add");
-    RUN_TEST(test_vec_sub, dev, "vec_sub");
     RUN_TEST(test_vec_mul, dev, "vec_mul");
     RUN_TEST(test_scale, dev, "scale");
-    
-    printf("Activations:\n");
     RUN_TEST(test_relu, dev, "relu");
     RUN_TEST(test_sigmoid, dev, "sigmoid");
-    RUN_TEST(test_tanh, dev, "tanh");
-    
-    printf("Math:\n");
     RUN_TEST(test_abs, dev, "abs");
-    RUN_TEST(test_sqrt, dev, "sqrt");
-    RUN_TEST(test_exp, dev, "exp");
-    RUN_TEST(test_log, dev, "log");
     RUN_TEST(test_square, dev, "square");
-    
-    printf("Data:\n");
     RUN_TEST(test_fill, dev, "fill");
     RUN_TEST(test_copy, dev, "copy");
-    RUN_TEST(test_negate, dev, "negate");
     
     ace_device_release(dev);
 }
@@ -572,7 +371,7 @@ static void test_device(const char* name, ace_device_type_t type, int idx) {
 
 int main() {
     printf("========================================\n");
-    printf("  AgierCompute Kernel Tests\n");
+    printf("  AgierCompute - User Kernel Tests\n");
     printf("========================================\n");
     
     /* CPU */
