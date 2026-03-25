@@ -34,12 +34,28 @@ set_target_properties(gpu_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# CUDA 后端测试
+add_executable(cuda_test cuda_test.c)
+target_include_directories(cuda_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(cuda_test PRIVATE ace_core)
+set_target_properties(cuda_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# Vulkan 后端测试
+add_executable(vulkan_test vulkan_test.c)
+target_include_directories(vulkan_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(vulkan_test PRIVATE ace_core)
+set_target_properties(vulkan_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # Linux 下设置 RPATH
 if(NOT WIN32)
-    set_target_properties(ace_demo simple_test user_kernels gpu_test PROPERTIES
+    set_target_properties(ace_demo simple_test user_kernels gpu_test cuda_test vulkan_test PROPERTIES
         BUILD_RPATH "${CMAKE_BINARY_DIR}/bin;${CMAKE_BINARY_DIR}/lib"
         INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN"
     )
 endif()
 
-install(TARGETS ace_demo simple_test user_kernels gpu_test RUNTIME DESTINATION bin)
+install(TARGETS ace_demo simple_test user_kernels gpu_test cuda_test vulkan_test RUNTIME DESTINATION bin)
