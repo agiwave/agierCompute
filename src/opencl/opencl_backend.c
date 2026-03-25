@@ -138,9 +138,10 @@ static void ocl_shutdown(ace_backend_info_t* info) {
 
 static ace_error_t ocl_device_count(int* count) {
     cl_uint num = 0;
-    clGetDeviceIDs(g_platform, CL_DEVICE_TYPE_GPU, 0, NULL, &num);
-    if (num == 0) {
-        clGetDeviceIDs(g_platform, CL_DEVICE_TYPE_CPU, 0, NULL, &num);
+    cl_int err = clGetDeviceIDs(g_platform, CL_DEVICE_TYPE_GPU, 0, NULL, &num);
+    if (err != CL_SUCCESS || num == 0) {
+        err = clGetDeviceIDs(g_platform, CL_DEVICE_TYPE_CPU, 0, NULL, &num);
+        if (err != CL_SUCCESS) num = 0;
     }
     *count = num;
     return ACE_OK;
@@ -320,11 +321,13 @@ static ace_error_t ocl_kernel_launch(void* kernel, ace_launch_config_t* cfg,
                                       void** args, size_t* sizes, int n) {
     ocl_kernel_t* k = (ocl_kernel_t*)kernel;
     if (!k || !k->kernel) return ACE_ERROR_LAUNCH;
-    
+    if (!k->device || !k->device->queue) return ACE_ERROR_LAUNCH;
+
     cl_int err = CL_SUCCESS;
     for (int i = 0; i < n; i++) {
         if (sizes[i] == ACE_ARG_BUFFER) {
             ocl_buffer_t* buf = (ocl_buffer_t*)args[i];
+            if (!buf || !buf->mem) return ACE_ERROR_LAUNCH;
             err = clSetKernelArg(k->kernel, i, sizeof(cl_mem), &buf->mem);
         } else {
             /* Assume 4 bytes for scalar */
@@ -332,10 +335,10 @@ static ace_error_t ocl_kernel_launch(void* kernel, ace_launch_config_t* cfg,
         }
         if (err != CL_SUCCESS) return ACE_ERROR_LAUNCH;
     }
-    
+
     size_t global[3] = { cfg->grid[0] * cfg->block[0], cfg->grid[1] * cfg->block[1], cfg->grid[2] * cfg->block[2] };
     size_t local[3] = { cfg->block[0], cfg->block[1], cfg->block[2] };
-    
+
     err = clEnqueueNDRangeKernel(k->device->queue, k->kernel, 3, NULL, global, local, 0, NULL, NULL);
     return (err == CL_SUCCESS) ? ACE_OK : ACE_ERROR_LAUNCH;
 }

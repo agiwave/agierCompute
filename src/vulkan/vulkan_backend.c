@@ -492,19 +492,22 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
     vkCreateComputePipelines(d->device, VK_NULL_HANDLE, 1, &pipe_info, NULL, &pipeline);
     vkDestroyShaderModule(d->device, shader, NULL);
     
-    /* Create descriptor pool */
-    VkDescriptorPoolSize pool_size = {
-        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .descriptorCount = n_buffers
-    };
+    /* Create descriptor pool - one entry per binding */
+    VkDescriptorPoolSize* pool_sizes = (VkDescriptorPoolSize*)calloc(n_buffers, sizeof(VkDescriptorPoolSize));
+    for (int i = 0; i < n_buffers; i++) {
+        pool_sizes[i].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        pool_sizes[i].descriptorCount = 1;
+    }
+    
     VkDescriptorPoolCreateInfo dp_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = 1,
-        .poolSizeCount = n_buffers > 0 ? 1 : 0,
-        .pPoolSizes = n_buffers > 0 ? &pool_size : NULL
+        .poolSizeCount = n_buffers > 0 ? n_buffers : 0,
+        .pPoolSizes = pool_sizes
     };
     VkDescriptorPool desc_pool;
     vkCreateDescriptorPool(d->device, &dp_info, NULL, &desc_pool);
+    free(pool_sizes);
     
     /* Allocate descriptor set */
     VkDescriptorSet desc_set = VK_NULL_HANDLE;
@@ -557,20 +560,20 @@ static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
                                      void** args, size_t* sizes, int n) {
     vk_kernel_t* k = (vk_kernel_t*)kernel;
     vk_device_t* d = k->dev;
-    
+
     /* Update descriptor sets */
     int buf_idx = 0;
     if (k->n_buffers > 0 && k->desc_set != VK_NULL_HANDLE) {
         VkWriteDescriptorSet* writes = (VkWriteDescriptorSet*)calloc(k->n_buffers, sizeof(VkWriteDescriptorSet));
         VkDescriptorBufferInfo* buf_infos = (VkDescriptorBufferInfo*)calloc(k->n_buffers, sizeof(VkDescriptorBufferInfo));
-        
+
         for (int i = 0; i < n && buf_idx < k->n_buffers; i++) {
             if (sizes[i] == ACE_ARG_BUFFER) {
                 vk_buffer_t* buf = (vk_buffer_t*)args[i];
                 buf_infos[buf_idx].buffer = buf->buffer;
                 buf_infos[buf_idx].offset = 0;
-                buf_infos[buf_idx].range = buf->size;
-                
+                buf_infos[buf_idx].range = VK_WHOLE_SIZE;  /* Use whole buffer */
+
                 writes[buf_idx].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[buf_idx].dstSet = k->desc_set;
                 writes[buf_idx].dstBinding = buf_idx;
