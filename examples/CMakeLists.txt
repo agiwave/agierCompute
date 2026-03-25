@@ -39,19 +39,19 @@ target_include_directories(test_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_kernels PRIVATE ace_core m)
 set_target_properties(test_kernels PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 8. 数据类型测试 - 测试 FLOAT16/BFLOAT16/INT8 等
+# 6. 数据类型测试 - 测试 FLOAT16/BFLOAT16/INT8 等
 add_executable(test_dtypes test_dtypes.c)
 target_include_directories(test_dtypes PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_dtypes PRIVATE ace_core m)
 set_target_properties(test_dtypes PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 6. 用户自定义内核示例
+# 7. 用户自定义内核示例
 add_executable(example_user_kernels user_kernels.c)
 target_include_directories(example_user_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(example_user_kernels PRIVATE ace_core)
 set_target_properties(example_user_kernels PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 7. C++ Demo
+# 8. C++ Demo
 add_executable(demo demo.cpp)
 target_include_directories(demo PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(demo PRIVATE ace_core)
@@ -70,56 +70,68 @@ if(NOT WIN32)
 endif()
 
 # ============================================================================
-# CTest 测试配置
+# CTest 测试配置 - 所有测试用例
 # ============================================================================
 
 enable_testing()
 
-# 快速测试（1 分钟内）
-add_test(NAME QuickTest COMMAND simple_test)
-set_tests_properties(QuickTest PROPERTIES
-    LABELS "CPU;Quick"
+# 后端测试
+add_test(NAME CPU_SimpleTest COMMAND simple_test)
+set_tests_properties(CPU_SimpleTest PROPERTIES
+    LABELS "CPU;Backend;Quick"
     TIMEOUT 60
 )
 
-# 后端测试
-add_test(NAME CUDABackend COMMAND test_cuda)
-set_tests_properties(CUDABackend PROPERTIES
+add_test(NAME CUDA_Backend COMMAND test_cuda)
+set_tests_properties(CUDA_Backend PROPERTIES
     LABELS "CUDA;Backend"
     TIMEOUT 60
 )
 
-add_test(NAME OpenCLBackend COMMAND test_opencl)
-set_tests_properties(OpenCLBackend PROPERTIES
+add_test(NAME OpenCL_Backend COMMAND test_opencl)
+set_tests_properties(OpenCL_Backend PROPERTIES
     LABELS "OpenCL;Backend"
     TIMEOUT 60
 )
 
-add_test(NAME VulkanBackend COMMAND test_vulkan)
-set_tests_properties(VulkanBackend PROPERTIES
+add_test(NAME Vulkan_Backend COMMAND test_vulkan)
+set_tests_properties(Vulkan_Backend PROPERTIES
     LABELS "Vulkan;Backend"
     TIMEOUT 60
 )
 
-# 全面内核测试
-add_test(NAME AllKernels COMMAND test_kernels)
-set_tests_properties(AllKernels PROPERTIES
-    LABELS "All;Kernels"
+# 内核功能测试
+add_test(NAME All_Kernels COMMAND test_kernels)
+set_tests_properties(All_Kernels PROPERTIES
+    LABELS "All;Kernels;Functionality"
     TIMEOUT 600
 )
 
 # 数据类型测试
-add_test(NAME DataTypeTests COMMAND test_dtypes)
-set_tests_properties(DataTypeTests PROPERTIES
-    LABELS "All;DataTypes"
+add_test(NAME Data_Types COMMAND test_dtypes)
+set_tests_properties(Data_Types PROPERTIES
+    LABELS "All;DataTypes;Functionality"
     TIMEOUT 300
+)
+
+# 示例程序测试
+add_test(NAME Example_UserKernels COMMAND example_user_kernels)
+set_tests_properties(Example_UserKernels PROPERTIES
+    LABELS "Example;UserKernels"
+    TIMEOUT 60
+)
+
+add_test(NAME Demo_CPP COMMAND demo)
+set_tests_properties(Demo_CPP PROPERTIES
+    LABELS "Example;Demo;CPP"
+    TIMEOUT 120
 )
 
 # ============================================================================
 # 自定义测试目标
 # ============================================================================
 
-# 运行所有快速测试
+# 运行所有快速测试（< 1 分钟）
 add_custom_target(test-quick
     COMMAND ${CMAKE_CTEST_COMMAND} -L "Quick" --output-on-failure
     DEPENDS simple_test
@@ -129,15 +141,41 @@ add_custom_target(test-quick
 # 运行所有后端测试
 add_custom_target(test-backends
     COMMAND ${CMAKE_CTEST_COMMAND} -L "Backend" --output-on-failure
-    DEPENDS test_cuda test_opencl test_vulkan
+    DEPENDS simple_test test_cuda test_opencl test_vulkan
     COMMENT "Running backend tests..."
 )
 
-# 运行所有内核测试
-add_custom_target(test-all
-    COMMAND ${CMAKE_CTEST_COMMAND} -L "All" --output-on-failure
+# 运行所有功能测试（内核 + 数据类型）
+add_custom_target(test-functionality
+    COMMAND ${CMAKE_CTEST_COMMAND} -L "Functionality" --output-on-failure
     DEPENDS test_kernels test_dtypes
-    COMMENT "Running all kernel and data type tests..."
+    COMMENT "Running functionality tests..."
+)
+
+# 运行所有测试（包括示例）
+add_custom_target(test-all
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+    DEPENDS simple_test test_cuda test_opencl test_vulkan test_kernels test_dtypes example_user_kernels demo
+    COMMENT "Running all tests..."
+)
+
+# 运行特定后端测试
+add_custom_target(test-cuda
+    COMMAND ${CMAKE_CTEST_COMMAND} -L "CUDA" --output-on-failure
+    DEPENDS test_cuda
+    COMMENT "Running CUDA tests..."
+)
+
+add_custom_target(test-opencl
+    COMMAND ${CMAKE_CTEST_COMMAND} -L "OpenCL" --output-on-failure
+    DEPENDS test_opencl
+    COMMENT "Running OpenCL tests..."
+)
+
+add_custom_target(test-vulkan
+    COMMAND ${CMAKE_CTEST_COMMAND} -L "Vulkan" --output-on-failure
+    DEPENDS test_vulkan
+    COMMENT "Running Vulkan tests..."
 )
 
 # ============================================================================
@@ -148,4 +186,11 @@ install(TARGETS
     simple_test test_cuda test_opencl test_vulkan test_kernels test_dtypes
     example_user_kernels demo
     RUNTIME DESTINATION bin
+)
+
+# 安装测试脚本
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake
+    DESTINATION bin
+    OPTIONAL
 )
