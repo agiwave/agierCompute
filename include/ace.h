@@ -272,9 +272,6 @@ ACE_API ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
 /* 等待设备上所有操作完成 */
 ACE_API ace_error_t ace_finish(ace_device_t dev);
 
-/* ace_finish的别名 */
-static inline ace_error_t ace_sync(ace_device_t dev) { return ace_finish(dev); }
-
 /* ============================================================================
  * 辅助函数
  * ============================================================================ */
@@ -305,96 +302,6 @@ static inline const char* ace_error_string(ace_error_t err) {
         case ACE_ERROR_NOT_FOUND: return "Not found";
         case ACE_ERROR_INVALID:   return "Invalid argument";
         default:                  return "Unknown error";
-    }
-}
-
-/* ============================================================================
- * 多设备管理 API - 跨 GPU 运行
- * ============================================================================ */
-
-/* 设备列表 */
-typedef struct {
-    ace_device_t* devices;
-    int count;
-    ace_device_type_t type;
-} ace_device_list_t;
-
-/* 获取所有可用设备 */
-ACE_API ace_error_t ace_device_get_all(ace_device_list_t* list);
-
-/* 释放设备列表 */
-ACE_API void ace_device_list_release(ace_device_list_t* list);
-
-/* 选择最佳设备（优先 GPU，其次 CPU） */
-ACE_API ace_error_t ace_device_select_best(ace_device_t* dev);
-
-/* ============================================================================
- * 数据并行 API - 自动跨设备分片
- * ============================================================================ */
-
-/* 分片缓冲区 */
-typedef struct {
-    ace_buffer_t* buffers;
-    size_t* offsets;
-    size_t* sizes;
-    int count;
-} ace_sharded_buffer_t;
-
-/* 创建分片缓冲区 - 自动在多个设备上分配 */
-ACE_API ace_error_t ace_buffer_alloc_sharded(
-    ace_device_list_t* devices,
-    size_t total_size,
-    ace_sharded_buffer_t* sharded
-);
-
-/* 释放分片缓冲区 */
-ACE_API void ace_buffer_free_sharded(ace_sharded_buffer_t* sharded);
-
-/* 写入分片缓冲区 */
-ACE_API ace_error_t ace_buffer_write_sharded(
-    ace_sharded_buffer_t* sharded,
-    const void* data,
-    size_t total_size
-);
-
-/* 读取分片缓冲区 */
-ACE_API ace_error_t ace_buffer_read_sharded(
-    ace_sharded_buffer_t* sharded,
-    void* data,
-    size_t total_size
-);
-
-/* 跨设备内核执行 - 自动分片并行 */
-ACE_API ace_error_t ace_kernel_invoke_sharded(
-    ace_device_list_t* devices,
-    ace_kernel_t kernel,
-    ace_dtype_t dtype,
-    size_t n,
-    void** args,
-    int* types,
-    int nargs
-);
-
-/* 等待所有设备完成 */
-ACE_API ace_error_t ace_finish_all(ace_device_list_t* devices);
-
-/* ============================================================================
- * 辅助函数 - 多设备
- * ============================================================================ */
-
-/* 打印设备信息 */
-static inline void ace_device_print_info(ace_device_t dev) {
-    ace_device_props_t props;
-    if (ace_device_props(dev, &props) == ACE_OK) {
-        const char* type_names[] = {"CPU", "CUDA", "OpenCL", "Vulkan", "Metal"};
-        const char* t = (props.type >= 0 && props.type <= 4) ? type_names[props.type] : "Unknown";
-        printf("Device: %s (%s)\n", props.name, t);
-        printf("  Vendor: %s\n", props.vendor);
-        printf("  Max threads: %zu\n", props.max_threads);
-        printf("  Compute units: %d\n", props.compute_units);
-        if (props.total_memory > 0) {
-            printf("  Total memory: %zu MB\n", props.total_memory / (1024 * 1024));
-        }
     }
 }
 
