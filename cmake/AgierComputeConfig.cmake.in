@@ -1,0 +1,41 @@
+@PACKAGE_INIT@
+
+# =============================================================================
+# AgierCompute CMake 配置文件
+# =============================================================================
+#
+# 使用方式:
+#   find_package(AgierCompute REQUIRED)
+#   target_link_libraries(your_target AgierCompute::ace_core)
+#
+# 提供的目标:
+#   AgierCompute::ace_core      - 核心库
+#   AgierCompute::ace_be_cpu    - CPU 后端
+#   AgierCompute::ace_be_cuda   - CUDA 后端
+#   AgierCompute::ace_be_opencl - OpenCL 后端
+#   AgierCompute::ace_be_vulkan - Vulkan 后端
+#
+# 提供的变量:
+#   AgierCompute_INCLUDE_DIRS   - 头文件目录
+#   AgierCompute_LIBRARIES      - 库文件
+#   AgierCompute_VERSION        - 版本号
+#
+# =============================================================================
+
+include(CMakeFindDependencyMacro)
+
+# 计算相对路径
+get_filename_component(ACE_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
+
+# 查找依赖
+# find_dependency(Threads REQUIRED)
+
+# 包含导出的目标
+include("${ACE_CMAKE_DIR}/AgierComputeTargets.cmake")
+
+# 设置变量
+set(AgierCompute_INCLUDE_DIRS "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+set(AgierCompute_LIBRARIES AgierCompute::ace_core)
+set(AgierCompute_VERSION "@PROJECT_VERSION@")
+
+check_required_components(AgierCompute)
