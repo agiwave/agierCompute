@@ -2,140 +2,159 @@ cmake_minimum_required(VERSION 3.15)
 
 project(ace_examples VERSION 1.0.0 LANGUAGES C CXX)
 
-# Simple test
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 11)
+
+# ============================================================================
+# 测试程序
+# ============================================================================
+
+# 1. 基础测试 - CPU 后端
 add_executable(simple_test simple_test.c)
 target_include_directories(simple_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(simple_test PRIVATE ace_core)
-set_target_properties(simple_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+set_target_properties(simple_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# Demo (C++)
-add_executable(ace_demo demo.cpp)
-target_include_directories(ace_demo PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(ace_demo PRIVATE ace_core)
-set_target_properties(ace_demo PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+# 2. CUDA 后端测试
+add_executable(test_cuda cuda_test.c)
+target_include_directories(test_cuda PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_cuda PRIVATE ace_core)
+set_target_properties(test_cuda PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 用户自定义内核示例
-add_executable(user_kernels user_kernels.c)
-target_include_directories(user_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(user_kernels PRIVATE ace_core)
-set_target_properties(user_kernels PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+# 3. OpenCL 后端测试
+add_executable(test_opencl opencl_test.c)
+target_include_directories(test_opencl PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_opencl PRIVATE ace_core)
+set_target_properties(test_opencl PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# GPU 后端测试
-add_executable(gpu_test gpu_test.c)
-target_include_directories(gpu_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(gpu_test PRIVATE ace_core)
-set_target_properties(gpu_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+# 4. Vulkan 后端测试
+add_executable(test_vulkan vulkan_test.c)
+target_include_directories(test_vulkan PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_vulkan PRIVATE ace_core)
+set_target_properties(test_vulkan PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# CUDA 后端测试
-add_executable(cuda_test cuda_test.c)
-target_include_directories(cuda_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(cuda_test PRIVATE ace_core)
-set_target_properties(cuda_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+# 5. 全面内核测试 - 测试所有预置内核
+add_executable(test_kernels kernel_tests.c)
+target_include_directories(test_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_kernels PRIVATE ace_core m)
+set_target_properties(test_kernels PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# Vulkan 后端测试
-add_executable(vulkan_test vulkan_test.c)
-target_include_directories(vulkan_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(vulkan_test PRIVATE ace_core)
-set_target_properties(vulkan_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+# 6. 性能基准测试（暂不编译，需要更新 API）
+# add_executable(benchmark benchmark.c)
+# target_include_directories(benchmark PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# target_link_libraries(benchmark PRIVATE ace_core m)
+# set_target_properties(benchmark PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# OpenCL 后端测试
-add_executable(opencl_test opencl_test.c)
-target_include_directories(opencl_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(opencl_test PRIVATE ace_core)
-set_target_properties(opencl_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+# 7. 用户自定义内核示例
+add_executable(example_user_kernels user_kernels.c)
+target_include_directories(example_user_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(example_user_kernels PRIVATE ace_core)
+set_target_properties(example_user_kernels PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 综合测试套件
-add_executable(comprehensive_test comprehensive_test.c)
-target_include_directories(comprehensive_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(comprehensive_test PRIVATE ace_core m)
-set_target_properties(comprehensive_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+# 8. 神经网络示例（暂不编译，需要更新 API）
+# add_executable(example_neural_net neural_net.c)
+# target_include_directories(example_neural_net PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# target_link_libraries(example_neural_net PRIVATE ace_core)
+# set_target_properties(example_neural_net PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# Linux 下设置 RPATH
+# 9. C++ Demo
+add_executable(demo demo.cpp)
+target_include_directories(demo PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(demo PRIVATE ace_core)
+set_target_properties(demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ============================================================================
+# RPATH 设置
+# ============================================================================
+
 if(NOT WIN32)
-    set_target_properties(ace_demo simple_test user_kernels gpu_test cuda_test vulkan_test opencl_test comprehensive_test PROPERTIES
+    set_target_properties(simple_test test_cuda test_opencl test_vulkan test_kernels 
+                          example_user_kernels demo PROPERTIES
         BUILD_RPATH "${CMAKE_BINARY_DIR}/bin;${CMAKE_BINARY_DIR}/lib"
         INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN"
     )
 endif()
 
-install(TARGETS ace_demo simple_test user_kernels gpu_test cuda_test vulkan_test opencl_test comprehensive_test RUNTIME DESTINATION bin)
-
 # ============================================================================
 # CTest 测试配置
 # ============================================================================
 
-include(CTest)
+enable_testing()
 
-# 基础测试
-add_test(NAME SimpleTest COMMAND simple_test)
-set_tests_properties(SimpleTest PROPERTIES
-    LABELS "CPU"
-    TIMEOUT 30
-)
-
-# GPU 后端测试
-add_test(NAME CUDATest COMMAND cuda_test)
-set_tests_properties(CUDATest PROPERTIES
-    LABELS "GPU;CUDA"
+# 快速测试（1 分钟内）
+add_test(NAME QuickTest COMMAND simple_test)
+set_tests_properties(QuickTest PROPERTIES
+    LABELS "CPU;Quick"
     TIMEOUT 60
 )
 
-add_test(NAME OpenCLTest COMMAND opencl_test)
-set_tests_properties(OpenCLTest PROPERTIES
-    LABELS "GPU;OpenCL"
+# 后端测试
+add_test(NAME CUDABackend COMMAND test_cuda)
+set_tests_properties(CUDABackend PROPERTIES
+    LABELS "CUDA;Backend"
     TIMEOUT 60
 )
 
-add_test(NAME VulkanTest COMMAND vulkan_test)
-set_tests_properties(VulkanTest PROPERTIES
-    LABELS "GPU;Vulkan"
+add_test(NAME OpenCLBackend COMMAND test_opencl)
+set_tests_properties(OpenCLBackend PROPERTIES
+    LABELS "OpenCL;Backend"
     TIMEOUT 60
 )
 
-# 综合测试
-add_test(NAME ComprehensiveTest COMMAND comprehensive_test)
-set_tests_properties(ComprehensiveTest PROPERTIES
-    LABELS "All"
-    TIMEOUT 180
-)
-
-# 多后端综合测试
-add_test(NAME MultiGPUTest COMMAND gpu_test)
-set_tests_properties(MultiGPUTest PROPERTIES
-    LABELS "GPU;Multi"
-    TIMEOUT 120
-)
-
-# 用户内核测试
-add_test(NAME UserKernelsTest COMMAND user_kernels)
-set_tests_properties(UserKernelsTest PROPERTIES
-    LABELS "CPU"
+add_test(NAME VulkanBackend COMMAND test_vulkan)
+set_tests_properties(VulkanBackend PROPERTIES
+    LABELS "Vulkan;Backend"
     TIMEOUT 60
 )
 
-# Demo 测试
-add_test(NAME DemoTest COMMAND ace_demo)
-set_tests_properties(DemoTest PROPERTIES
-    LABELS "All"
-    TIMEOUT 120
+# 全面内核测试
+add_test(NAME AllKernels COMMAND test_kernels)
+set_tests_properties(AllKernels PROPERTIES
+    LABELS "All;Kernels"
+    TIMEOUT 600
 )
 
-# 测试分组
-add_test(NAME AllCPUTests COMMAND ${CMAKE_COMMAND} -E echo "CPU Tests: simple_test, user_kernels")
-add_test(NAME AllGPUTests COMMAND ${CMAKE_COMMAND} -E echo "GPU Tests: cuda_test, opencl_test, vulkan_test")
+# 性能基准（可选，较慢）
+# add_test(NAME Benchmark COMMAND benchmark)
+# set_tests_properties(Benchmark PROPERTIES
+#     LABELS "Performance"
+#     TIMEOUT 300
+# )
+
+# 示例程序（不纳入自动测试）
+# example_user_kernels, example_neural_net, demo
+
+# ============================================================================
+# 自定义测试目标
+# ============================================================================
+
+# 运行所有快速测试
+add_custom_target(test-quick
+    COMMAND ${CMAKE_CTEST_COMMAND} -L "Quick" --output-on-failure
+    DEPENDS simple_test
+    COMMENT "Running quick tests..."
+)
+
+# 运行所有后端测试
+add_custom_target(test-backends
+    COMMAND ${CMAKE_CTEST_COMMAND} -L "Backend" --output-on-failure
+    DEPENDS test_cuda test_opencl test_vulkan
+    COMMENT "Running backend tests..."
+)
+
+# 运行所有测试
+add_custom_target(test-all
+    COMMAND ${CMAKE_CTEST_COMMAND} -L "All" --output-on-failure
+    DEPENDS test_kernels
+    COMMENT "Running all kernel tests..."
+)
+
+# ============================================================================
+# 安装规则
+# ============================================================================
+
+install(TARGETS 
+    simple_test test_cuda test_opencl test_vulkan test_kernels
+    example_user_kernels demo
+    RUNTIME DESTINATION bin
+)
