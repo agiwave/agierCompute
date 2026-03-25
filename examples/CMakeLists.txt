@@ -6,19 +6,14 @@ project(ace_examples VERSION 1.0.0 LANGUAGES C CXX)
 add_executable(simple_test simple_test.c)
 target_include_directories(simple_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(simple_test PRIVATE ace_core)
-
-# 统一输出目录
 set_target_properties(simple_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
 # Demo (C++)
 add_executable(ace_demo demo.cpp)
-
 target_include_directories(ace_demo PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(ace_demo PRIVATE ace_core)
-
-# 统一输出目录
 set_target_properties(ace_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
@@ -39,12 +34,28 @@ set_target_properties(multi_device_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# 完整单元测试套件
+add_executable(unit_tests unit_tests.c)
+target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(unit_tests PRIVATE ace_core m)
+set_target_properties(unit_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# 性能基准测试
+add_executable(benchmark benchmark.c)
+target_include_directories(benchmark PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(benchmark PRIVATE ace_core m)
+set_target_properties(benchmark PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # Linux 下设置 RPATH，确保能找到库
 if(NOT WIN32)
-    set_target_properties(ace_demo simple_test user_kernels multi_device_test PROPERTIES
+    set_target_properties(ace_demo simple_test user_kernels multi_device_test unit_tests benchmark PROPERTIES
         BUILD_RPATH "${CMAKE_BINARY_DIR}/bin;${CMAKE_BINARY_DIR}/lib"
         INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN"
     )
 endif()
 
-install(TARGETS ace_demo simple_test user_kernels multi_device_test RUNTIME DESTINATION bin)
+install(TARGETS ace_demo simple_test user_kernels multi_device_test unit_tests benchmark RUNTIME DESTINATION bin)
