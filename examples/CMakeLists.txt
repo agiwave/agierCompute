@@ -33,31 +33,19 @@ target_include_directories(test_vulkan PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_vulkan PRIVATE ace_core)
 set_target_properties(test_vulkan PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 5. 全面内核测试 - 测试所有预置内核
+# 5. 用户内核测试 - 测试所有用户定义的内核
 add_executable(test_kernels kernel_tests.c)
 target_include_directories(test_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_kernels PRIVATE ace_core m)
 set_target_properties(test_kernels PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 6. 性能基准测试（暂不编译，需要更新 API）
-# add_executable(benchmark benchmark.c)
-# target_include_directories(benchmark PRIVATE ${CMAKE_SOURCE_DIR}/include)
-# target_link_libraries(benchmark PRIVATE ace_core m)
-# set_target_properties(benchmark PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-
-# 7. 用户自定义内核示例
+# 6. 用户自定义内核示例
 add_executable(example_user_kernels user_kernels.c)
 target_include_directories(example_user_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(example_user_kernels PRIVATE ace_core)
 set_target_properties(example_user_kernels PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# 8. 神经网络示例（暂不编译，需要更新 API）
-# add_executable(example_neural_net neural_net.c)
-# target_include_directories(example_neural_net PRIVATE ${CMAKE_SOURCE_DIR}/include)
-# target_link_libraries(example_neural_net PRIVATE ace_core)
-# set_target_properties(example_neural_net PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-
-# 9. C++ Demo
+# 7. C++ Demo
 add_executable(demo demo.cpp)
 target_include_directories(demo PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(demo PRIVATE ace_core)
@@ -114,16 +102,6 @@ set_tests_properties(AllKernels PROPERTIES
     TIMEOUT 600
 )
 
-# 性能基准（可选，较慢）
-# add_test(NAME Benchmark COMMAND benchmark)
-# set_tests_properties(Benchmark PROPERTIES
-#     LABELS "Performance"
-#     TIMEOUT 300
-# )
-
-# 示例程序（不纳入自动测试）
-# example_user_kernels, example_neural_net, demo
-
 # ============================================================================
 # 自定义测试目标
 # ============================================================================
@@ -142,7 +120,7 @@ add_custom_target(test-backends
     COMMENT "Running backend tests..."
 )
 
-# 运行所有测试
+# 运行所有内核测试
 add_custom_target(test-all
     COMMAND ${CMAKE_CTEST_COMMAND} -L "All" --output-on-failure
     DEPENDS test_kernels

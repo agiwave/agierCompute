@@ -640,7 +640,7 @@ static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
         scalars = (float*)calloc(k->n_scalars, sizeof(float));
         int scalar_idx = 0;
         for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
-            if (sizes[i] == ACE_ARG_VALUE) {
+            if (sizes[i] != ACE_ARG_BUFFER) {  /* ACE_ARG_VALUE = 1 */
                 /* Read as int (most common for loop counters and sizes) */
                 int ival = *(int*)args[i];
                 scalars[scalar_idx] = (float)ival;
