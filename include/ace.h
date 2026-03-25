@@ -379,6 +379,83 @@ ACE_API ace_error_t ace_kernel_invoke_sharded(
 ACE_API ace_error_t ace_finish_all(ace_device_list_t* devices);
 
 /* ============================================================================
+ * Stream API - 异步执行（简化版）
+ * ============================================================================ */
+
+typedef struct ace_stream_* ace_stream_t;
+
+/* 创建流 */
+ACE_API ace_error_t ace_stream_create(ace_device_t dev, ace_stream_t* stream);
+
+/* 销毁流 */
+ACE_API void ace_stream_destroy(ace_stream_t stream);
+
+/* 在流上执行内核（异步，不阻塞） */
+ACE_API ace_error_t ace_stream_launch(
+    ace_stream_t stream,
+    ace_kernel_t kernel,
+    ace_dtype_t dtype,
+    size_t n,
+    void** args,
+    int* types,
+    int nargs
+);
+
+/* 异步内存传输 */
+ACE_API ace_error_t ace_stream_memcpy_h2d(ace_stream_t stream, ace_buffer_t dst, const void* src, size_t size);
+ACE_API ace_error_t ace_stream_memcpy_d2h(ace_stream_t stream, void* dst, ace_buffer_t src, size_t size);
+
+/* 流同步（等待流完成） */
+ACE_API ace_error_t ace_stream_synchronize(ace_stream_t stream);
+
+/* 获取默认流（同步） */
+ACE_API ace_stream_t ace_stream_default(ace_device_t dev);
+
+/* ============================================================================
+ * 内存池 API - 简化版
+ * ============================================================================ */
+
+typedef struct ace_mempool_* ace_mempool_t;
+
+/* 创建内存池 */
+ACE_API ace_mempool_t ace_mempool_create(ace_device_t dev);
+
+/* 销毁内存池 */
+ACE_API void ace_mempool_destroy(ace_mempool_t pool);
+
+/* 从内存池分配 */
+ACE_API ace_error_t ace_mempool_alloc(ace_mempool_t pool, size_t size, ace_buffer_t* buf);
+
+/* 释放回内存池 */
+ACE_API void ace_mempool_free(ace_mempool_t pool, ace_buffer_t buf);
+
+/* ============================================================================
+ * 实用计算原语
+ * ============================================================================ */
+
+/* 向量加法：y = a + b */
+ACE_API ace_error_t ace_vec_add(ace_stream_t stream, int n, ace_buffer_t a, ace_buffer_t b, ace_buffer_t y);
+
+/* 向量缩放：y = alpha * x */
+ACE_API ace_error_t ace_vec_scale(ace_stream_t stream, int n, float alpha, ace_buffer_t x, ace_buffer_t y);
+
+/* 向量点积：result = dot(x, y) */
+ACE_API ace_error_t ace_vec_dot(ace_stream_t stream, int n, ace_buffer_t x, ace_buffer_t y, ace_buffer_t result);
+
+/* 矩阵乘法：C = A * B (A:mxk, B:kxn, C:mxn) */
+ACE_API ace_error_t ace_matmul(
+    ace_stream_t stream,
+    int m, int n, int k,
+    ace_buffer_t A, ace_buffer_t B, ace_buffer_t C
+);
+
+/* ReLU 激活：y = max(0, x) */
+ACE_API ace_error_t ace_relu(ace_stream_t stream, int n, ace_buffer_t x, ace_buffer_t y);
+
+/* Sigmoid 激活：y = 1 / (1 + exp(-x)) */
+ACE_API ace_error_t ace_sigmoid(ace_stream_t stream, int n, ace_buffer_t x, ace_buffer_t y);
+
+/* ============================================================================
  * 辅助函数 - 多设备
  * ============================================================================ */
 

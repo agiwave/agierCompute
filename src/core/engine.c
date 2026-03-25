@@ -743,3 +743,228 @@ ace_error_t ace_finish_all(ace_device_list_t* devices) {
     }
     return ACE_OK;
 }
+
+/* ============================================================================
+ * Stream API - 简化实现
+ * ============================================================================ */
+
+struct ace_stream_ {
+    ace_device_t dev;
+    int is_default;
+};
+
+ace_stream_t ace_stream_default(ace_device_t dev) {
+    static struct ace_stream_ default_stream = {NULL, 1};
+    if (dev) default_stream.dev = dev;
+    return &default_stream;
+}
+
+ace_error_t ace_stream_create(ace_device_t dev, ace_stream_t* stream) {
+    if (!dev || !stream) return ACE_ERROR_INVALID;
+    *stream = (ace_stream_t)calloc(1, sizeof(struct ace_stream_));
+    if (!*stream) return ACE_ERROR_MEM;
+    (*stream)->dev = dev;
+    (*stream)->is_default = 0;
+    return ACE_OK;
+}
+
+void ace_stream_destroy(ace_stream_t stream) {
+    if (stream && !stream->is_default) {
+        free(stream);
+    }
+}
+
+ace_error_t ace_stream_launch(
+    ace_stream_t stream,
+    ace_kernel_t kernel,
+    ace_dtype_t dtype,
+    size_t n,
+    void** args,
+    int* types,
+    int nargs
+) {
+    if (!stream || !stream->dev) return ACE_ERROR_INVALID;
+    /* 简化实现：直接调用同步内核执行 */
+    /* 真正的异步需要后端支持 Stream */
+    return ace_kernel_invoke(stream->dev, kernel, dtype, n, args, types, nargs);
+}
+
+ace_error_t ace_stream_memcpy_h2d(ace_stream_t stream, ace_buffer_t dst, const void* src, size_t size) {
+    if (!stream || !dst) return ACE_ERROR_INVALID;
+    return ace_buffer_write(dst, src, size);
+}
+
+ace_error_t ace_stream_memcpy_d2h(ace_stream_t stream, void* dst, ace_buffer_t src, size_t size) {
+    if (!stream || !src) return ACE_ERROR_INVALID;
+    return ace_buffer_read(src, dst, size);
+}
+
+ace_error_t ace_stream_synchronize(ace_stream_t stream) {
+    if (!stream || !stream->dev) return ACE_ERROR_INVALID;
+    return ace_finish(stream->dev);
+}
+
+/* ============================================================================
+ * 内存池 API - 简化实现
+ * ============================================================================ */
+
+#define MEMPOOL_MAX_BLOCKS 256
+
+typedef struct {
+    void* ptr;
+    size_t size;
+    int used;
+} mempool_block_t;
+
+struct ace_mempool_ {
+    ace_device_t dev;
+    mempool_block_t blocks[MEMPOOL_MAX_BLOCKS];
+    int count;
+    size_t total_allocated;
+};
+
+ace_mempool_t ace_mempool_create(ace_device_t dev) {
+    if (!dev) return NULL;
+    ace_mempool_t pool = (ace_mempool_t)calloc(1, sizeof(struct ace_mempool_));
+    if (pool) pool->dev = dev;
+    return pool;
+}
+
+void ace_mempool_destroy(ace_mempool_t pool) {
+    if (!pool) return;
+    /* 释放所有未释放的块 */
+    for (int i = 0; i < pool->count; i++) {
+        if (pool->blocks[i].used && pool->blocks[i].ptr) {
+            ace_buffer_free((ace_buffer_t)pool->blocks[i].ptr);
+        }
+    }
+    free(pool);
+}
+
+ace_error_t ace_mempool_alloc(ace_mempool_t pool, size_t size, ace_buffer_t* buf) {
+    if (!pool || !buf) return ACE_ERROR_INVALID;
+
+    /* 查找合适的空闲块 */
+    for (int i = 0; i < pool->count; i++) {
+        if (!pool->blocks[i].used && pool->blocks[i].size >= size) {
+            pool->blocks[i].used = 1;
+            *buf = (ace_buffer_t)pool->blocks[i].ptr;
+            return ACE_OK;
+        }
+    }
+
+    /* 分配新块 */
+    if (pool->count >= MEMPOOL_MAX_BLOCKS) return ACE_ERROR_MEM;
+
+    ace_error_t err = ace_buffer_alloc(pool->dev, size, buf);
+    if (err != ACE_OK) return err;
+
+    pool->blocks[pool->count].ptr = *buf;
+    pool->blocks[pool->count].size = size;
+    pool->blocks[pool->count].used = 1;
+    pool->count++;
+    pool->total_allocated += size;
+
+    return ACE_OK;
+}
+
+void ace_mempool_free(ace_mempool_t pool, ace_buffer_t buf) {
+    if (!pool || !buf) return;
+    /* 标记为未使用，不真正释放 */
+    for (int i = 0; i < pool->count; i++) {
+        if (pool->blocks[i].ptr == buf) {
+            pool->blocks[i].used = 0;
+            return;
+        }
+    }
+}
+
+/* ============================================================================
+ * 实用计算原语实现
+ * ============================================================================ */
+
+ACE_KERNEL(kernel_vec_add,
+    void vec_add(int n, T* a, T* b, T* y) {
+        int i = GID;
+        if (i < n) y[i] = a[i] + b[i];
+    }
+);
+
+ACE_KERNEL(kernel_vec_scale,
+    void vec_scale(int n, T alpha, T* x, T* y) {
+        int i = GID;
+        if (i < n) y[i] = x[i] * alpha;
+    }
+);
+
+ACE_KERNEL(kernel_relu,
+    void relu(int n, T* x, T* y) {
+        int i = GID;
+        if (i < n) y[i] = x[i] > 0 ? x[i] : 0;
+    }
+);
+
+ACE_KERNEL(kernel_sigmoid,
+    void sigmoid(int n, T* x, T* y) {
+        int i = GID;
+        if (i < n) y[i] = 1.0f / (1.0f + expf(-x[i]));
+    }
+);
+
+ACE_KERNEL(kernel_gemm,
+    void gemm(int n, int m, int k, T* A, T* B, T* C) {
+        int row = GID;
+        if (row < n) {
+            for (int j = 0; j < m; j++) {
+                T sum = 0;
+                for (int i = 0; i < k; i++) {
+                    sum += A[row * k + i] * B[i * m + j];
+                }
+                C[row * m + j] = sum;
+            }
+        }
+    }
+);
+
+ace_error_t ace_vec_add(ace_stream_t stream, int n, ace_buffer_t a, ace_buffer_t b, ace_buffer_t y) {
+    if (!stream || !a || !b || !y) return ACE_ERROR_INVALID;
+    void* args[] = {&n, a, b, y};
+    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
+    return ace_stream_launch(stream, _ace_get_kernel_vec_add(), ACE_DTYPE_FLOAT32, n, args, types, 4);
+}
+
+ace_error_t ace_vec_scale(ace_stream_t stream, int n, float alpha, ace_buffer_t x, ace_buffer_t y) {
+    if (!stream || !x || !y) return ACE_ERROR_INVALID;
+    void* args[] = {&n, &alpha, x, y};
+    int types[] = {ACE_VAL, ACE_VAL, ACE_BUF, ACE_BUF};
+    return ace_stream_launch(stream, _ace_get_kernel_vec_scale(), ACE_DTYPE_FLOAT32, n, args, types, 4);
+}
+
+ace_error_t ace_relu(ace_stream_t stream, int n, ace_buffer_t x, ace_buffer_t y) {
+    if (!stream || !x || !y) return ACE_ERROR_INVALID;
+    void* args[] = {&n, x, y};
+    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    return ace_stream_launch(stream, _ace_get_kernel_relu(), ACE_DTYPE_FLOAT32, n, args, types, 3);
+}
+
+ace_error_t ace_sigmoid(ace_stream_t stream, int n, ace_buffer_t x, ace_buffer_t y) {
+    if (!stream || !x || !y) return ACE_ERROR_INVALID;
+    void* args[] = {&n, x, y};
+    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    return ace_stream_launch(stream, _ace_get_kernel_sigmoid(), ACE_DTYPE_FLOAT32, n, args, types, 3);
+}
+
+ace_error_t ace_vec_dot(ace_stream_t stream, int n, ace_buffer_t x, ace_buffer_t y, ace_buffer_t result) {
+    /* 简化实现：使用预定义的 dot 内核 */
+    /* 完整实现需要归约操作 */
+    (void)stream; (void)n; (void)x; (void)y; (void)result;
+    return ACE_ERROR;  /* TODO: 实现归约 */
+}
+
+ace_error_t ace_matmul(ace_stream_t stream, int m, int n, int k, ace_buffer_t A, ace_buffer_t B, ace_buffer_t C) {
+    if (!stream || !A || !B || !C) return ACE_ERROR_INVALID;
+    size_t sz_m = m, sz_n = n, sz_k = k;
+    void* args[] = {&sz_m, &sz_n, &sz_k, A, B, C};
+    int types[] = {ACE_VAL, ACE_VAL, ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
+    return ace_stream_launch(stream, _ace_get_kernel_gemm(), ACE_DTYPE_FLOAT32, m, args, types, 6);
+}

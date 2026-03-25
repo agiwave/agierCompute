@@ -50,12 +50,20 @@ set_target_properties(benchmark PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# 神经网络示例
+add_executable(neural_net neural_net.c)
+target_include_directories(neural_net PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(neural_net PRIVATE ace_core m)
+set_target_properties(neural_net PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # Linux 下设置 RPATH，确保能找到库
 if(NOT WIN32)
-    set_target_properties(ace_demo simple_test user_kernels multi_device_test unit_tests benchmark PROPERTIES
+    set_target_properties(ace_demo simple_test user_kernels multi_device_test unit_tests benchmark neural_net PROPERTIES
         BUILD_RPATH "${CMAKE_BINARY_DIR}/bin;${CMAKE_BINARY_DIR}/lib"
         INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN"
     )
 endif()
 
-install(TARGETS ace_demo simple_test user_kernels multi_device_test unit_tests benchmark RUNTIME DESTINATION bin)
+install(TARGETS ace_demo simple_test user_kernels multi_device_test unit_tests benchmark neural_net RUNTIME DESTINATION bin)
