@@ -51,15 +51,12 @@ typedef enum {
     ACE_BACKEND_DEVICE_METAL  = 4,
 } ace_backend_device_type_t;
 
-typedef struct {
-    size_t grid[3];
-    size_t block[3];
-    size_t shared_mem;
-} ace_launch_config_t;
-
 /* 参数类型标记 */
 #define ACE_ARG_BUFFER  0
 #define ACE_ARG_VALUE   1
+
+/* 启动配置 - 前向声明（完整定义在 ace.h 中）*/
+typedef struct ace_launch_config_ ace_launch_config_t;
 
 /* ============================================================================
  * 后端信息结构

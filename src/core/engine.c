@@ -1,12 +1,18 @@
 /**
  * @file engine.c
- * @brief 引擎核心实现 - 后端加载和调度
+ * @brief 引擎核心实现 - 后端加载和API转发
+ * 
+ * 设计原则：
+ * - Core层只做API抽象和转发
+ * - 异步执行、同步、内存管理由后端负责
+ * - 不模拟实现Stream/Event/Mempool
  */
 #include "ace.h"
 #include "ace_backend_api.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 /* ============================================================================
  * 平台相关宏
@@ -27,37 +33,22 @@
 #endif
 
 /* ============================================================================
- * 内部结构定义（不暴露给用户）
+ * 内部结构
  * ============================================================================ */
 
-/* 启动配置（内部使用，来自 ace_backend_api.h） */
-static inline ace_launch_config_t ace_launch_1d(size_t n, size_t block) {
-    ace_launch_config_t c;
-    c.grid[0] = (n + block - 1) / block;
-    c.grid[1] = 1; c.grid[2] = 1;
-    c.block[0] = block;
-    c.block[1] = 1; c.block[2] = 1;
-    c.shared_mem = 0;
-    return c;
-}
-
-/* 后端入口（前向声明） */
 typedef struct backend_entry_s backend_entry_t;
 
-/* 设备句柄实现 */
 struct ace_device_ {
     backend_entry_t* backend;
     void* handle;
 };
 
-/* 缓冲区句柄实现 */
 struct ace_buffer_ {
     ace_device_t dev;
     void* ptr;
     size_t size;
 };
 
-/* 后端入口完整定义 */
 struct backend_entry_s {
     ace_backend_info_t* info;
     ace_backend_ops_t ops;
@@ -65,23 +56,35 @@ struct backend_entry_s {
     int inited;
 };
 
+/* 内核模板 */
+typedef struct {
+    char* name;
+    char* src;
+} kernel_template_t;
+
+#define MAX_TEMPLATES 256
+static kernel_template_t g_templates[MAX_TEMPLATES];
+static int g_template_count = 0;
+
+/* 编译后的内核缓存 */
+typedef struct {
+    ace_device_t dev;
+    int template_idx;
+    ace_dtype_t dtype;
+    void* handle;
+} compiled_kernel_t;
+
+#define MAX_COMPILED 1024
+static compiled_kernel_t g_compiled[MAX_COMPILED];
+static int g_compiled_count = 0;
+
 /* 全局引擎状态 */
 static struct {
     backend_entry_t list[16];
     int count;
     int inited;
     int auto_init_attempted;
-    ace_log_level_t log_level;
 } g_engine;
-
-/* 日志控制 */
-void ace_set_log_level(ace_log_level_t level) {
-    g_engine.log_level = level;
-}
-
-ace_log_level_t ace_get_log_level(void) {
-    return g_engine.log_level;
-}
 
 /* ============================================================================
  * 后端加载
@@ -91,9 +94,7 @@ static void load_backend(const char* path) {
     if (g_engine.count >= 16) return;
     
     DYNLIB h = LOAD_LIB(path);
-    if (!h) {
-        return;
-    }
+    if (!h) return;
     
     typedef ace_backend_info_t* (*get_backend_fn)(void);
     typedef ace_backend_ops_t* (*get_ops_fn)(void);
@@ -101,25 +102,13 @@ static void load_backend(const char* path) {
     get_backend_fn get_backend = (get_backend_fn)GET_SYM(h, "ace_get_backend");
     get_ops_fn get_ops = (get_ops_fn)GET_SYM(h, "ace_get_backend_ops");
     
-    if (!get_backend) {
-        get_backend = (get_backend_fn)GET_SYM(h, "ace_backend_info");
-    }
-    
-    if (!get_backend) {
-        printf("[ACE] No get_backend symbol found\n");
-        fflush(stdout);
-        CLOSE_LIB(h);
-        return;
-    }
+    if (!get_backend) get_backend = (get_backend_fn)GET_SYM(h, "ace_backend_info");
+    if (!get_backend) { CLOSE_LIB(h); return; }
     
     ace_backend_info_t* info = get_backend();
-    if (!info) {
-        printf("[ACE] get_backend returned NULL\n");
-        fflush(stdout);
-        CLOSE_LIB(h);
-        return;
-    }
+    if (!info) { CLOSE_LIB(h); return; }
     
+    /* 检查是否已加载 */
     for (int i = 0; i < g_engine.count; i++) {
         if (g_engine.list[i].info->type == info->type) {
             CLOSE_LIB(h);
@@ -127,27 +116,15 @@ static void load_backend(const char* path) {
         }
     }
     
-    ace_backend_ops_t* ops = NULL;
-    if (get_ops) {
-        ops = get_ops();
-    }
-    
-    if (!ops) {
-        printf("[ACE] No ops found for backend: %s\n", info->name);
-        fflush(stdout);
-        CLOSE_LIB(h);
-        return;
-    }
+    ace_backend_ops_t* ops = get_ops ? get_ops() : NULL;
+    if (!ops) { CLOSE_LIB(h); return; }
     
     if (ops->init && ops->init(info) != 0) {
-        printf("[ACE] Backend init failed: %s\n", info->name);
-        fflush(stdout);
         CLOSE_LIB(h);
         return;
     }
     
-    printf("[ACE] Loaded backend: %s (type=%d)\n", info->name, info->type);
-    fflush(stdout);
+    printf("[ACE] Loaded: %s\n", info->name);
     
     g_engine.list[g_engine.count].info = info;
     g_engine.list[g_engine.count].ops = *ops;
@@ -156,6 +133,7 @@ static void load_backend(const char* path) {
     g_engine.count++;
 }
 
+/* 扫描目录查找后端库 */
 #ifdef _WIN32
 static void scan_dir(const char* dir) {
     char pattern[MAX_PATH];
@@ -182,23 +160,17 @@ static void scan_dir(const char* dir) {
     
     struct dirent* entry;
     while ((entry = readdir(d)) != NULL) {
-        /* 查找 ace_be_*.so 或 libace_be_*.so 文件 */
         const char* name = entry->d_name;
         int is_backend = 0;
         
-        if (strncmp(name, "ace_be_", 7) == 0) {
-            is_backend = 1;
-            name += 7;  /* 跳过 ace_be_ */
-        } else if (strncmp(name, "libace_be_", 10) == 0) {
-            is_backend = 1;
-            name += 10;  /* 跳过 libace_be_ */
-        }
+        if (strncmp(name, "ace_be_", 7) == 0) is_backend = 1;
+        else if (strncmp(name, "libace_be_", 10) == 0) is_backend = 1;
         
         if (is_backend) {
-            const char* ext = strrchr(entry->d_name, '.');
+            const char* ext = strrchr(name, '.');
             if (ext && strcmp(ext, ".so") == 0) {
                 char path[1024];
-                snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+                snprintf(path, sizeof(path), "%s/%s", dir, name);
                 load_backend(path);
             }
         }
@@ -207,88 +179,35 @@ static void scan_dir(const char* dir) {
 }
 #endif
 
-/* ============================================================================
- * 自动初始化
- * ============================================================================ */
-
-static void ace_shutdown(void);  /* 前向声明 */
-
 static void auto_init(void) {
     if (g_engine.inited || g_engine.auto_init_attempted) return;
-    
-    /* 先设置标志，防止递归调用 */
     g_engine.auto_init_attempted = 1;
     
 #ifdef _WIN32
     char exe_path[MAX_PATH];
     GetModuleFileNameA(NULL, exe_path, MAX_PATH);
     char* last_slash = strrchr(exe_path, '\\');
-    if (last_slash) {
-        *last_slash = '\0';
-        scan_dir(exe_path);
-    }
+    if (last_slash) { *last_slash = '\0'; scan_dir(exe_path); }
 #else
-    /* Linux: 搜索多个目录 */
     const char* search_dirs[] = {
-        NULL,  /* 可执行文件目录，动态获取 */
-        "./lib",
-        "./bin",
-        "../lib",
-        "../bin",
-        "/usr/local/lib/ace",
-        "/usr/lib/ace",
-        NULL
+        NULL, "./lib", "./bin", "../lib", "../bin", NULL
     };
     
-    /* 获取可执行文件所在目录 */
     char exe_path[1024] = {0};
     ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
     if (len > 0) {
         exe_path[len] = '\0';
         char* last_slash = strrchr(exe_path, '/');
-        if (last_slash) {
-            *last_slash = '\0';
-            search_dirs[0] = exe_path;
-        }
+        if (last_slash) { *last_slash = '\0'; search_dirs[0] = exe_path; }
     }
     
-    /* 遍历所有搜索目录 */
     for (int i = 0; search_dirs[i] != NULL; i++) {
         scan_dir(search_dirs[i]);
     }
-    
-    /* 同时搜索当前工作目录 */
     scan_dir(".");
 #endif
     
     g_engine.inited = 1;
-    
-    /* 暂时禁用 atexit，避免 Vulkan 清理时崩溃 */
-    /* atexit(ace_shutdown); */
-}
-
-#define ENSURE_INIT() do { if (!g_engine.inited) auto_init(); } while(0)
-
-/* ============================================================================
- * 引擎内部初始化（已废弃，保留向后兼容）
- * ============================================================================ */
-
-ace_error_t ace_init(const char* backend_dir) {
-    ENSURE_INIT();
-    return ACE_OK;
-}
-
-/* 内部清理函数（由 atexit 自动调用） */
-static void ace_shutdown(void) {
-    for (int i = 0; i < g_engine.count; i++) {
-        if (g_engine.list[i].inited && g_engine.list[i].ops.shutdown) {
-            g_engine.list[i].ops.shutdown(g_engine.list[i].info);
-        }
-        if (g_engine.list[i].handle) {
-            CLOSE_LIB(g_engine.list[i].handle);
-        }
-    }
-    memset(&g_engine, 0, sizeof(g_engine));
 }
 
 static backend_entry_t* find_backend(ace_device_type_t type) {
@@ -301,32 +220,40 @@ static backend_entry_t* find_backend(ace_device_type_t type) {
 }
 
 /* ============================================================================
- * 设备 API
+ * 设备管理 API
  * ============================================================================ */
 
 ace_error_t ace_device_count(ace_device_type_t type, int* count) {
-    ENSURE_INIT();
+    auto_init();
+    
+    if (type == ACE_DEVICE_CPU) {
+        *count = 1;  /* CPU总是可用 */
+        return ACE_OK;
+    }
+    
     backend_entry_t* b = find_backend(type);
     if (!b || !b->ops.device_count) {
         *count = 0;
         return ACE_OK;
     }
+    
     return b->ops.device_count(count);
 }
 
 ace_error_t ace_device_get(ace_device_type_t type, int idx, ace_device_t* dev) {
-    ENSURE_INIT();
-    backend_entry_t* b = find_backend(type);
-    if (!b || !b->ops.device_get) return ACE_ERROR_DEVICE;
+    auto_init();
     
-    struct ace_device_* d = (struct ace_device_*)malloc(sizeof(*d));
+    backend_entry_t* b = find_backend(type);
+    if (!b) return ACE_ERROR_NOT_FOUND;
+    
+    ace_device_t d = (ace_device_t)calloc(1, sizeof(*d));
     if (!d) return ACE_ERROR_MEM;
     
     d->backend = b;
-    ace_error_t err = b->ops.device_get(idx, &d->handle);
-    if (err != ACE_OK) {
-        free(d);
-        return err;
+    
+    if (b->ops.device_get) {
+        ace_error_t err = b->ops.device_get(idx, &d->handle);
+        if (err != ACE_OK) { free(d); return err; }
     }
     
     *dev = d;
@@ -334,36 +261,35 @@ ace_error_t ace_device_get(ace_device_type_t type, int idx, ace_device_t* dev) {
 }
 
 void ace_device_release(ace_device_t dev) {
-    if (dev) {
-        if (dev->backend->ops.device_release) {
-            dev->backend->ops.device_release(dev->handle);
-        }
-        free(dev);
+    if (!dev) return;
+    if (dev->backend && dev->backend->ops.device_release) {
+        dev->backend->ops.device_release(dev->handle);
     }
+    free(dev);
 }
 
 ace_error_t ace_device_props(ace_device_t dev, ace_device_props_t* props) {
-    if (!dev || !dev->backend->ops.device_props) return ACE_ERROR_DEVICE;
+    if (!dev || !props) return ACE_ERROR_INVALID;
+    if (!dev->backend || !dev->backend->ops.device_props) return ACE_ERROR_BACKEND;
     return dev->backend->ops.device_props(dev->handle, props);
 }
 
 /* ============================================================================
- * 内存 API
+ * 内存管理 API
  * ============================================================================ */
 
 ace_error_t ace_buffer_alloc(ace_device_t dev, size_t size, ace_buffer_t* buf) {
-    if (!dev || !dev->backend->ops.mem_alloc) return ACE_ERROR_DEVICE;
+    if (!dev || !buf) return ACE_ERROR_INVALID;
     
-    struct ace_buffer_* b = (struct ace_buffer_*)malloc(sizeof(*b));
+    ace_buffer_t b = (ace_buffer_t)calloc(1, sizeof(*b));
     if (!b) return ACE_ERROR_MEM;
     
     b->dev = dev;
     b->size = size;
     
-    ace_error_t err = dev->backend->ops.mem_alloc(dev->handle, size, &b->ptr);
-    if (err != ACE_OK) {
-        free(b);
-        return err;
+    if (dev->backend && dev->backend->ops.mem_alloc) {
+        ace_error_t err = dev->backend->ops.mem_alloc(dev->handle, size, &b->ptr);
+        if (err != ACE_OK) { free(b); return err; }
     }
     
     *buf = b;
@@ -371,114 +297,69 @@ ace_error_t ace_buffer_alloc(ace_device_t dev, size_t size, ace_buffer_t* buf) {
 }
 
 void ace_buffer_free(ace_buffer_t buf) {
-    if (buf) {
-        if (buf->dev && buf->dev->backend->ops.mem_free) {
-            buf->dev->backend->ops.mem_free(buf->dev->handle, buf->ptr);
-        }
-        free(buf);
+    if (!buf) return;
+    if (buf->dev && buf->dev->backend && buf->dev->backend->ops.mem_free) {
+        buf->dev->backend->ops.mem_free(buf->dev->handle, buf->ptr);
     }
+    free(buf);
 }
 
 ace_error_t ace_buffer_write(ace_buffer_t buf, const void* data, size_t size) {
-    if (!buf || !buf->dev->backend->ops.mem_write) return ACE_ERROR_DEVICE;
+    if (!buf || !data || !buf->dev) return ACE_ERROR_INVALID;
+    if (!buf->dev->backend || !buf->dev->backend->ops.mem_write) return ACE_ERROR_BACKEND;
     return buf->dev->backend->ops.mem_write(buf->dev->handle, buf->ptr, data, size);
 }
 
 ace_error_t ace_buffer_read(ace_buffer_t buf, void* data, size_t size) {
-    if (!buf || !buf->dev->backend->ops.mem_read) return ACE_ERROR_DEVICE;
+    if (!buf || !data || !buf->dev) return ACE_ERROR_INVALID;
+    if (!buf->dev->backend || !buf->dev->backend->ops.mem_read) return ACE_ERROR_BACKEND;
+    /* 后端会自动同步 */
     return buf->dev->backend->ops.mem_read(buf->dev->handle, data, buf->ptr, size);
 }
 
+/* ============================================================================
+ * 同步 API
+ * ============================================================================ */
+
 ace_error_t ace_finish(ace_device_t dev) {
-    if (!dev || !dev->backend->ops.finish) return ACE_ERROR_DEVICE;
+    if (!dev) return ACE_ERROR_INVALID;
+    if (!dev->backend || !dev->backend->ops.finish) return ACE_ERROR_BACKEND;
     return dev->backend->ops.finish(dev->handle);
 }
 
 /* ============================================================================
- * 内核模板存储
+ * 内核模板管理
  * ============================================================================ */
 
-#define MAX_KERNEL_TEMPLATES 128
-
-typedef struct {
-    char name[64];
-    char* src;
-    int in_use;
-} kernel_template_t;
-
-static kernel_template_t g_templates[MAX_KERNEL_TEMPLATES];
-
-/* ============================================================================
- * 内核缓存（按设备+模板+类型）
- * ============================================================================ */
-
-#define KERNEL_CACHE_SIZE 256
-
-typedef struct {
-    ace_device_t dev;
-    int template_idx;
-    ace_dtype_t dtype;
-    void* handle;
-    int in_use;
-} compiled_kernel_t;
-
-static compiled_kernel_t g_compiled[KERNEL_CACHE_SIZE];
-
-/* ============================================================================
- * 内核注册 API
- * ============================================================================ */
-
-ace_kernel_t ace_register_kernel(const char* name, const char* src) {
-    for (int i = 0; i < MAX_KERNEL_TEMPLATES; i++) {
-        if (g_templates[i].in_use && strcmp(g_templates[i].name, name) == 0) {
-            return (ace_kernel_t)(intptr_t)(i + 1);
-        }
-    }
+static void instantiate_template(const char* src, ace_dtype_t dtype, char* out, size_t max_len) {
+    const char* type_name = ace_dtype_name(dtype);
+    size_t len = strlen(src);
     
-    for (int i = 0; i < MAX_KERNEL_TEMPLATES; i++) {
-        if (!g_templates[i].in_use) {
-            strncpy(g_templates[i].name, name, sizeof(g_templates[i].name) - 1);
-            g_templates[i].src = strdup(src);
-            g_templates[i].in_use = 1;
-            return (ace_kernel_t)(intptr_t)(i + 1);
+    /* 替换 T 为具体类型 */
+    size_t j = 0;
+    for (size_t i = 0; i < len && j < max_len - 1; i++) {
+        if (src[i] == 'T' && (i == 0 || !isalnum(src[i-1]))) {
+            /* 检查下一个字符不是字母数字 */
+            if (!isalnum(src[i+1])) {
+                const char* t = type_name;
+                while (*t && j < max_len - 1) out[j++] = *t++;
+                continue;
+            }
         }
+        out[j++] = src[i];
     }
-    
-    return NULL;
+    out[j] = '\0';
 }
 
 static kernel_template_t* get_template(ace_kernel_t kernel) {
     int idx = (int)(intptr_t)kernel - 1;
-    if (idx < 0 || idx >= MAX_KERNEL_TEMPLATES) return NULL;
-    if (!g_templates[idx].in_use) return NULL;
+    if (idx < 0 || idx >= g_template_count) return NULL;
     return &g_templates[idx];
 }
 
-static char* instantiate_template(const char* src, ace_dtype_t dtype, char* buf, size_t size) {
-    const char* type_name = ace_dtype_name(dtype);
-    const char* s = src;
-    char* d = buf;
-    char* end = buf + size - 1;
-    
-    while (*s && d < end) {
-        if (s[0] == 'T' && (s[1] == ' ' || s[1] == '*' || s[1] == ',' || 
-                            s[1] == ')' || s[1] == ']' || s[1] == ';' ||
-                            s[1] == '\n' || s[1] == '\t' || s[1] == '\0')) {
-            const char* t = type_name;
-            while (*t && d < end) *d++ = *t++;
-            s++;
-        } else {
-            *d++ = *s++;
-        }
-    }
-    *d = '\0';
-    return buf;
-}
-
 static compiled_kernel_t* find_compiled_kernel(ace_device_t dev, int template_idx, ace_dtype_t dtype) {
-    for (int i = 0; i < KERNEL_CACHE_SIZE; i++) {
-        if (g_compiled[i].in_use && 
-            g_compiled[i].dev == dev && 
+    for (int i = 0; i < g_compiled_count; i++) {
+        if (g_compiled[i].dev == dev && 
             g_compiled[i].template_idx == template_idx &&
             g_compiled[i].dtype == dtype) {
             return &g_compiled[i];
@@ -489,37 +370,42 @@ static compiled_kernel_t* find_compiled_kernel(ace_device_t dev, int template_id
 
 static compiled_kernel_t* cache_compiled_kernel(ace_device_t dev, int template_idx, 
                                                   ace_dtype_t dtype, void* handle) {
-    for (int i = 0; i < KERNEL_CACHE_SIZE; i++) {
-        if (!g_compiled[i].in_use) {
-            g_compiled[i].dev = dev;
-            g_compiled[i].template_idx = template_idx;
-            g_compiled[i].dtype = dtype;
-            g_compiled[i].handle = handle;
-            g_compiled[i].in_use = 1;
-            return &g_compiled[i];
+    if (g_compiled_count >= MAX_COMPILED) return NULL;
+    
+    g_compiled[g_compiled_count].dev = dev;
+    g_compiled[g_compiled_count].template_idx = template_idx;
+    g_compiled[g_compiled_count].dtype = dtype;
+    g_compiled[g_compiled_count].handle = handle;
+    g_compiled_count++;
+    
+    return &g_compiled[g_compiled_count - 1];
+}
+
+ace_kernel_t ace_register_kernel(const char* name, const char* src) {
+    if (g_template_count >= MAX_TEMPLATES) return NULL;
+    
+    /* 检查是否已注册 */
+    for (int i = 0; i < g_template_count; i++) {
+        if (strcmp(g_templates[i].name, name) == 0) {
+            return (ace_kernel_t)(intptr_t)(i + 1);
         }
     }
     
-    int idx = 0;
-    if (g_compiled[idx].in_use && g_compiled[idx].handle) {
-        g_compiled[idx].dev->backend->ops.kernel_release(g_compiled[idx].handle);
-    }
-    g_compiled[idx].dev = dev;
-    g_compiled[idx].template_idx = template_idx;
-    g_compiled[idx].dtype = dtype;
-    g_compiled[idx].handle = handle;
-    g_compiled[idx].in_use = 1;
-    return &g_compiled[idx];
+    g_templates[g_template_count].name = strdup(name);
+    g_templates[g_template_count].src = strdup(src);
+    g_template_count++;
+    
+    return (ace_kernel_t)(intptr_t)g_template_count;
 }
 
 /* ============================================================================
- * 内核调用 API（lazy编译 + 执行）
+ * 内核执行 API
  * ============================================================================ */
 
 ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
                                ace_dtype_t dtype, size_t n,
                                void** args, int* types, int nargs) {
-    if (!dev || !kernel) return ACE_ERROR_DEVICE;
+    if (!dev || !kernel) return ACE_ERROR_INVALID;
     if (!dev->backend->ops.kernel_compile || !dev->backend->ops.kernel_launch) {
         return ACE_ERROR_BACKEND;
     }
@@ -528,7 +414,6 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
     if (!tmpl) return ACE_ERROR_COMPILE;
     
     int template_idx = (int)(intptr_t)kernel - 1;
-    
     compiled_kernel_t* compiled = find_compiled_kernel(dev, template_idx, dtype);
     
     if (!compiled) {
@@ -543,19 +428,16 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
         ace_error_t err = dev->backend->ops.kernel_compile(dev->handle, full_name, 
                                                             instantiated, &handle, &err_msg);
         if (err != ACE_OK) {
-            if (err_msg) {
-                printf("[ACE] Compile error: %s\n", err_msg);
-                free(err_msg);
-            }
+            if (err_msg) { printf("[ACE] Compile error: %s\n", err_msg); free(err_msg); }
             return err;
         }
         
         compiled = cache_compiled_kernel(dev, template_idx, dtype, handle);
     }
     
+    /* 处理参数 */
     void* processed_args[16];
     size_t sizes[16];
-    
     if (nargs > 16) nargs = 16;
     
     for (int i = 0; i < nargs; i++) {
@@ -569,7 +451,295 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
         }
     }
     
+    /* 后端负责异步执行 */
     ace_launch_config_t cfg = ace_launch_1d(n, 256);
-    
     return dev->backend->ops.kernel_launch(compiled->handle, &cfg, processed_args, sizes, nargs);
+}
+
+ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
+                               ace_dtype_t dtype, ace_launch_config_t* config,
+                               void** args, int* types, int nargs) {
+    if (!dev || !kernel) return ACE_ERROR_INVALID;
+    if (!dev->backend->ops.kernel_compile || !dev->backend->ops.kernel_launch) {
+        return ACE_ERROR_BACKEND;
+    }
+    
+    kernel_template_t* tmpl = get_template(kernel);
+    if (!tmpl) return ACE_ERROR_COMPILE;
+    
+    int template_idx = (int)(intptr_t)kernel - 1;
+    compiled_kernel_t* compiled = find_compiled_kernel(dev, template_idx, dtype);
+    
+    if (!compiled) {
+        char instantiated[8192];
+        instantiate_template(tmpl->src, dtype, instantiated, sizeof(instantiated));
+        
+        char full_name[128];
+        snprintf(full_name, sizeof(full_name), "%s_%s", tmpl->name, ace_dtype_name(dtype));
+        
+        void* handle = NULL;
+        char* err_msg = NULL;
+        ace_error_t err = dev->backend->ops.kernel_compile(dev->handle, full_name, 
+                                                            instantiated, &handle, &err_msg);
+        if (err != ACE_OK) {
+            if (err_msg) { printf("[ACE] Compile error: %s\n", err_msg); free(err_msg); }
+            return err;
+        }
+        
+        compiled = cache_compiled_kernel(dev, template_idx, dtype, handle);
+    }
+    
+    /* 处理参数 */
+    void* processed_args[16];
+    size_t sizes[16];
+    if (nargs > 16) nargs = 16;
+    
+    for (int i = 0; i < nargs; i++) {
+        if (types[i] == ACE_BUF) {
+            struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
+            processed_args[i] = buf ? buf->ptr : NULL;
+            sizes[i] = ACE_ARG_BUFFER;
+        } else {
+            processed_args[i] = args[i];
+            sizes[i] = ACE_ARG_VALUE;
+        }
+    }
+    
+    /* 使用自定义配置，后端负责异步执行 */
+    ace_launch_config_t default_cfg = ace_launch_1d(1, 1);
+    return dev->backend->ops.kernel_launch(compiled->handle,
+                                            config ? config : &default_cfg,
+                                            processed_args, sizes, nargs);
+}
+
+/* ============================================================================
+ * 多设备管理 API - 跨 GPU 运行
+ * ============================================================================ */
+
+ace_error_t ace_device_get_all(ace_device_list_t* list) {
+    if (!list) return ACE_ERROR_INVALID;
+
+    auto_init();
+
+    /* 扫描所有后端类型 */
+    ace_device_type_t types[] = {
+        ACE_DEVICE_CUDA, ACE_DEVICE_OPENCL, ACE_DEVICE_VULKAN, ACE_DEVICE_METAL, ACE_DEVICE_CPU
+    };
+    int num_types = sizeof(types) / sizeof(types[0]);
+
+    /* 计算总设备数 */
+    int total = 0;
+    for (int i = 0; i < num_types; i++) {
+        int count = 0;
+        ace_device_count(types[i], &count);
+        total += count;
+    }
+
+    if (total == 0) {
+        list->devices = NULL;
+        list->count = 0;
+        list->type = ACE_DEVICE_CPU;
+        return ACE_OK;
+    }
+
+    list->devices = (ace_device_t*)calloc(total, sizeof(ace_device_t));
+    if (!list->devices) return ACE_ERROR_MEM;
+
+    list->count = 0;
+
+    /* 优先获取 GPU 设备 */
+    for (int i = 0; i < num_types; i++) {
+        int count = 0;
+        ace_device_count(types[i], &count);
+        for (int j = 0; j < count; j++) {
+            ace_device_t dev;
+            if (ace_device_get(types[i], j, &dev) == ACE_OK) {
+                list->devices[list->count++] = dev;
+            }
+        }
+    }
+
+    list->type = list->count > 0 ? list->devices[0]->backend->info->type : ACE_DEVICE_CPU;
+    return ACE_OK;
+}
+
+void ace_device_list_release(ace_device_list_t* list) {
+    if (!list) return;
+    for (int i = 0; i < list->count; i++) {
+        ace_device_release(list->devices[i]);
+    }
+    free(list->devices);
+    list->devices = NULL;
+    list->count = 0;
+}
+
+ace_error_t ace_device_select_best(ace_device_t* dev) {
+    if (!dev) return ACE_ERROR_INVALID;
+
+    ace_device_list_t list;
+    ace_error_t err = ace_device_get_all(&list);
+    if (err != ACE_OK || list.count == 0) {
+        *dev = NULL;
+        return ACE_ERROR_NOT_FOUND;
+    }
+
+    /* 选择第一个设备（优先 GPU） */
+    *dev = list.devices[0];
+
+    /* 释放其他设备 */
+    for (int i = 1; i < list.count; i++) {
+        ace_device_release(list.devices[i]);
+    }
+    free(list.devices);
+
+    return ACE_OK;
+}
+
+/* ============================================================================
+ * 数据并行 API - 自动跨设备分片
+ * ============================================================================ */
+
+ace_error_t ace_buffer_alloc_sharded(
+    ace_device_list_t* devices,
+    size_t total_size,
+    ace_sharded_buffer_t* sharded
+) {
+    if (!devices || !sharded || devices->count == 0) return ACE_ERROR_INVALID;
+
+    int count = devices->count;
+    sharded->buffers = (ace_buffer_t*)calloc(count, sizeof(ace_buffer_t));
+    sharded->offsets = (size_t*)calloc(count, sizeof(size_t));
+    sharded->sizes = (size_t*)calloc(count, sizeof(size_t));
+    sharded->count = count;
+
+    if (!sharded->buffers || !sharded->offsets || !sharded->sizes) {
+        ace_buffer_free_sharded(sharded);
+        return ACE_ERROR_MEM;
+    }
+
+    /* 平均分配 */
+    size_t base_size = total_size / count;
+    size_t remainder = total_size % count;
+
+    for (int i = 0; i < count; i++) {
+        sharded->sizes[i] = base_size + (i < (int)remainder ? base_size : 0);
+        sharded->offsets[i] = (i == 0) ? 0 : sharded->offsets[i-1] + sharded->sizes[i-1];
+
+        ace_error_t err = ace_buffer_alloc(devices->devices[i], sharded->sizes[i], &sharded->buffers[i]);
+        if (err != ACE_OK) {
+            ace_buffer_free_sharded(sharded);
+            return err;
+        }
+    }
+
+    return ACE_OK;
+}
+
+void ace_buffer_free_sharded(ace_sharded_buffer_t* sharded) {
+    if (!sharded) return;
+    for (int i = 0; i < sharded->count; i++) {
+        if (sharded->buffers[i]) {
+            ace_buffer_free(sharded->buffers[i]);
+        }
+    }
+    free(sharded->buffers);
+    free(sharded->offsets);
+    free(sharded->sizes);
+    memset(sharded, 0, sizeof(*sharded));
+}
+
+ace_error_t ace_buffer_write_sharded(
+    ace_sharded_buffer_t* sharded,
+    const void* data,
+    size_t total_size
+) {
+    (void)total_size;  /* unused - sizes are in sharded->sizes */
+    if (!sharded || !data) return ACE_ERROR_INVALID;
+
+    const uint8_t* bytes = (const uint8_t*)data;
+    for (int i = 0; i < sharded->count; i++) {
+        ace_error_t err = ace_buffer_write(sharded->buffers[i], bytes + sharded->offsets[i], sharded->sizes[i]);
+        if (err != ACE_OK) return err;
+    }
+    return ACE_OK;
+}
+
+ace_error_t ace_buffer_read_sharded(
+    ace_sharded_buffer_t* sharded,
+    void* data,
+    size_t total_size
+) {
+    (void)total_size;  /* unused - sizes are in sharded->sizes */
+    if (!sharded || !data) return ACE_ERROR_INVALID;
+
+    uint8_t* bytes = (uint8_t*)data;
+    for (int i = 0; i < sharded->count; i++) {
+        ace_error_t err = ace_buffer_read(sharded->buffers[i], bytes + sharded->offsets[i], sharded->sizes[i]);
+        if (err != ACE_OK) return err;
+    }
+    return ACE_OK;
+}
+
+ace_error_t ace_kernel_invoke_sharded(
+    ace_device_list_t* devices,
+    ace_kernel_t kernel,
+    ace_dtype_t dtype,
+    size_t n,
+    void** args,
+    int* types,
+    int nargs
+) {
+    if (!devices || !kernel || devices->count == 0) return ACE_ERROR_INVALID;
+
+    int count = devices->count;
+    size_t per_device = (n + count - 1) / count;
+
+    /* 为每个设备创建参数 */
+    void** device_args[16];
+    int device_types[16][16];
+
+    for (int i = 0; i < count; i++) {
+        device_args[i] = (void**)calloc(nargs, sizeof(void*));
+
+        for (int j = 0; j < nargs; j++) {
+            device_types[i][j] = types[j];
+            if (types[j] == ACE_BUF) {
+                /* 分片缓冲区 */
+                ace_sharded_buffer_t* sharded = (ace_sharded_buffer_t*)args[j];
+                device_args[i][j] = &sharded->buffers[i];
+            } else {
+                device_args[i][j] = args[j];
+            }
+        }
+    }
+
+    /* 在每个设备上启动内核 */
+    for (int i = 0; i < count; i++) {
+        size_t dev_n = (i == count - 1) ? (n - i * per_device) : per_device;
+        if (dev_n > n) dev_n = n;
+
+        /* 更新第一个参数（元素数量）如果是标量 */
+        if (nargs > 0 && types[0] == ACE_VAL) {
+            int dev_n_int = (int)dev_n;
+            memcpy(device_args[i][0], &dev_n_int, sizeof(int));
+        }
+
+        ace_kernel_invoke(devices->devices[i], kernel, dtype, dev_n,
+                          device_args[i], device_types[i], nargs);
+    }
+
+    /* 清理 */
+    for (int i = 0; i < count; i++) {
+        free(device_args[i]);
+    }
+
+    return ACE_OK;
+}
+
+ace_error_t ace_finish_all(ace_device_list_t* devices) {
+    if (!devices) return ACE_ERROR_INVALID;
+    for (int i = 0; i < devices->count; i++) {
+        ace_finish(devices->devices[i]);
+    }
+    return ACE_OK;
 }
