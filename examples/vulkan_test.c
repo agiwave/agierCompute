@@ -1,23 +1,24 @@
 /**
  * @file vulkan_test.c
- * @brief Vulkan 后端测试 - 每个设备独立测试
+ * @brief Vulkan 后端测试
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "ace.h"
 
+/* 内核必须在文件作用域定义 */
+ACE_KERNEL(vec_add,
+    void vec_add(int n, T* a, T* b, T* c) {
+        int i = GID;
+        if (i < n) c[i] = a[i] + b[i];
+    }
+);
+
 int test_device(ace_device_t dev, int idx) {
     ace_device_props_t props;
     ace_device_props(dev, &props);
     printf("Device %d: %s\n", idx, props.name);
-
-    ACE_KERNEL(vec_add,
-        void vec_add(int n, T* a, T* b, T* c) {
-            int i = GID;
-            if (i < n) c[i] = a[i] + b[i];
-        }
-    );
 
     const int N = 100;
     float *h_a = malloc(N * sizeof(float));
@@ -47,7 +48,7 @@ int test_device(ace_device_t dev, int idx) {
     ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
     
     if (err != ACE_OK) {
-        printf("Kernel invoke FAILED (err=%d)\n", err);
+        printf("FAILED (err=%d)\n", err);
         ace_finish(dev);
         free(h_a); free(h_b); free(h_c);
         ace_buffer_free(buf_a);
@@ -57,27 +58,15 @@ int test_device(ace_device_t dev, int idx) {
         return 0;
     }
     
-    printf("OK, syncing... ");
-    fflush(stdout);
+    printf("OK\n");
     ace_finish(dev);
-    printf("reading... ");
-    fflush(stdout);
-    err = ace_buffer_read(buf_c, h_c, N * sizeof(float));
-    if (err != ACE_OK) {
-        printf("Read FAILED (err=%d)\n", err);
-        free(h_a); free(h_b); free(h_c);
-        ace_buffer_free(buf_a);
-        ace_buffer_free(buf_b);
-        ace_buffer_free(buf_c);
-        ace_device_release(dev);
-        return 0;
-    }
+    ace_buffer_read(buf_c, h_c, N * sizeof(float));
 
     int pass = 1;
     for (int i = 0; i < 10; i++) {
         if (h_c[i] != h_a[i] + h_b[i]) { pass = 0; break; }
     }
-    printf("%s\n", pass ? "PASS" : "FAIL");
+    printf("  Result: %s\n", pass ? "PASS" : "FAIL");
 
     free(h_a); free(h_b); free(h_c);
     ace_buffer_free(buf_a);
@@ -89,7 +78,7 @@ int test_device(ace_device_t dev, int idx) {
 
 int main() {
     printf("========================================\n");
-    printf("  Vulkan Backend Tests (All Devices)\n");
+    printf("  Vulkan Backend Tests\n");
     printf("========================================\n\n");
 
     int count = 0;
