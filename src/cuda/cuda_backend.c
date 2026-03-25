@@ -157,7 +157,7 @@ static ace_error_t cuda_device_props(void* dev, void* props) {
     ace_device_props_t* p = (ace_device_props_t*)props;
     if (!d || !p) return ACE_ERROR_DEVICE;
     
-    p->type = ACE_DEVICE_CUDA;
+    p->type = ACE_BACKEND_DEVICE_CUDA;
     strncpy(p->name, d->name, sizeof(p->name) - 1);
     strcpy(p->vendor, "NVIDIA");
     p->total_memory = d->total_mem;
@@ -226,7 +226,7 @@ static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* 
     nvrtcResult res = nvrtcCreateProgram(&prog, cuda_src, name, 0, NULL, NULL);
     if (res != NVRTC_SUCCESS) {
         free(cuda_src);
-        if (err_msg) *err_msg = _strdup("Failed to create NVRTC program");
+        if (err_msg) *err_msg = strdup("Failed to create NVRTC program");
         return ACE_ERROR_COMPILE;
     }
     
@@ -263,7 +263,7 @@ static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* 
         return ACE_ERROR_MEM;
     }
     
-    k->name = _strdup(name);
+    k->name = strdup(name);
     k->dev = d;
     
     CUresult err = cuModuleLoadData(&k->module, ptx);
@@ -272,7 +272,7 @@ static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* 
     if (err != CUDA_SUCCESS) {
         free(k->name);
         free(k);
-        if (err_msg) *err_msg = _strdup("Failed to load PTX module");
+        if (err_msg) *err_msg = strdup("Failed to load PTX module");
         return ACE_ERROR_COMPILE;
     }
     
@@ -281,7 +281,7 @@ static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* 
         cuModuleUnload(k->module);
         free(k->name);
         free(k);
-        if (err_msg) *err_msg = _strdup("Failed to get kernel function");
+        if (err_msg) *err_msg = strdup("Failed to get kernel function");
         return ACE_ERROR_COMPILE;
     }
     
@@ -293,7 +293,7 @@ static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* 
 
 static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* src,
                                         void** kernel, char** err_msg) {
-    if (err_msg) *err_msg = _strdup("NVRTC not available");
+    if (err_msg) *err_msg = strdup("NVRTC not available");
     return ACE_ERROR_COMPILE;
 }
 
@@ -349,13 +349,13 @@ static ace_backend_ops_t cuda_ops = {
     .kernel_launch = cuda_kernel_launch,
 };
 
-ACE_DEFINE_BACKEND(ACE_DEVICE_CUDA, "CUDA", &cuda_ops)
+ACE_DEFINE_BACKEND(ACE_BACKEND_DEVICE_CUDA, "CUDA", &cuda_ops)
 
 #else
 
 /* CUDA SDK not available - provide stub */
 static ace_backend_ops_t cuda_ops = {0};
 
-ACE_DEFINE_BACKEND(ACE_DEVICE_CUDA, "CUDA (unavailable)", &cuda_ops)
+ACE_DEFINE_BACKEND(ACE_BACKEND_DEVICE_CUDA, "CUDA (unavailable)", &cuda_ops)
 
 #endif /* CUDA_AVAILABLE */

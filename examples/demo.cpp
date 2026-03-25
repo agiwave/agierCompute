@@ -209,8 +209,8 @@ int main() {
     /* Test available backends */
     test_backend("CPU", ACE_DEVICE_CPU);
     test_backend("OpenCL", ACE_DEVICE_OPENCL);
-    test_backend("CUDA", ACE_DEVICE_CUDA);  /* Requires NVRTC for kernel compilation */
-    /* test_backend("Vulkan", ACE_DEVICE_VULKAN); */  /* Requires SPIRV compiler */
+    test_backend("CUDA", ACE_DEVICE_CUDA);
+    test_backend("Vulkan", ACE_DEVICE_VULKAN);
     
     printf("\n========================================\n");
     printf("  ALL TESTS COMPLETED!\n");

@@ -42,12 +42,14 @@ typedef int ace_error_t;
 #define ACE_ERROR_IO       -6
 #define ACE_ERROR_BACKEND  -7
 
-typedef int ace_device_type_t;
-#define ACE_DEVICE_CPU    0
-#define ACE_DEVICE_CUDA   1
-#define ACE_DEVICE_OPENCL 2
-#define ACE_DEVICE_VULKAN 3
-#define ACE_DEVICE_METAL  4
+/* 设备类型 - 使用int以兼容枚举 */
+typedef enum {
+    ACE_BACKEND_DEVICE_CPU    = 0,
+    ACE_BACKEND_DEVICE_CUDA   = 1,
+    ACE_BACKEND_DEVICE_OPENCL = 2,
+    ACE_BACKEND_DEVICE_VULKAN = 3,
+    ACE_BACKEND_DEVICE_METAL  = 4,
+} ace_backend_device_type_t;
 
 typedef struct {
     size_t grid[3];
@@ -64,7 +66,7 @@ typedef struct {
  * ============================================================================ */
 
 typedef struct {
-    ace_device_type_t type;
+    ace_backend_device_type_t type;
     const char* name;
     void* user_data;
 } ace_backend_info_t;

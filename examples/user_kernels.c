@@ -1,213 +1,255 @@
 /**
  * @file user_kernels.c
- * @brief 用户内核示例 - 展示如何使用AgierCompute编写自己的内核
- * 
- * 这是用户编写的内核代码，使用ACE语法。
- * 引擎会将其翻译到CPU/CUDA/OpenCL等平台。
+ * @brief 用户自定义内核示例 - 展示更多内核类型
  */
-
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
 #include "ace.h"
 
 /* ============================================================================
- * 示例1: 向量加法
+ * 内核定义
  * ============================================================================ */
 
-const char* kernel_vec_add = R"(
-ACE_KERNEL(vec_add, (int n, ACE_GLOBAL float* a, ACE_GLOBAL float* b, ACE_GLOBAL float* c))
-{
-    int i = ACE_GLOBAL_ID;
-    if (i < n) {
-        c[i] = a[i] + b[i];
+ACE_KERNEL(kernel_vec_mul,
+    void vec_mul(int n, T* a, T* b, T* c) {
+        int i = GID;
+        if (i < n) c[i] = a[i] * b[i];
     }
-}
-)";
+);
+
+ACE_KERNEL(kernel_sigmoid,
+    void sigmoid(int n, T* in, T* out) {
+        int i = GID;
+        if (i < n) out[i] = 1.0 / (1.0 + exp(-in[i]));
+    }
+);
+
+ACE_KERNEL(kernel_fill,
+    void fill(int n, T val, T* out) {
+        int i = GID;
+        if (i < n) out[i] = val;
+    }
+);
+
+ACE_KERNEL(kernel_sqrt,
+    void kernel_sqrt(int n, T* in, T* out) {
+        int i = GID;
+        if (i < n) out[i] = sqrt(in[i]);
+    }
+);
+
+ACE_KERNEL(kernel_exp,
+    void kernel_exp(int n, T* in, T* out) {
+        int i = GID;
+        if (i < n) out[i] = exp(in[i]);
+    }
+);
 
 /* ============================================================================
- * 示例2: ReLU激活函数
+ * 测试函数
  * ============================================================================ */
 
-const char* kernel_relu = R"(
-ACE_KERNEL(relu, (int n, ACE_GLOBAL float* x, ACE_GLOBAL float* y))
-{
-    int i = ACE_GLOBAL_ID;
-    if (i < n) {
-        float val = x[i];
-        y[i] = val > 0.0f ? val : 0.0f;
+static void test_vec_mul(ace_device_t dev) {
+    printf("\n--- Test: vec_mul ---\n");
+    
+    const int N = 6;
+    float h_a[] = {1, 2, 3, 4, 5, 6};
+    float h_b[] = {2, 3, 4, 5, 6, 7};
+    float h_c[6];
+    
+    ace_buffer_t buf_a, buf_b, buf_c;
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_a);
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_b);
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_c);
+    
+    ace_buffer_write(buf_a, h_a, N * sizeof(float));
+    ace_buffer_write(buf_b, h_b, N * sizeof(float));
+    
+    int n = N;
+    void* args[] = {&n, buf_a, buf_b, buf_c};
+    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
+    
+    ace_kernel_invoke(dev, _ace_get_kernel_vec_mul(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_finish(dev);
+    
+    ace_buffer_read(buf_c, h_c, N * sizeof(float));
+    
+    int pass = 1;
+    for (int i = 0; i < N; i++) {
+        if (fabs(h_c[i] - h_a[i] * h_b[i]) > 0.001f) pass = 0;
     }
+    printf("%s\n", pass ? "PASS" : "FAIL");
+    printf("  Results: ");
+    for (int i = 0; i < N; i++) printf("%.1f ", h_c[i]);
+    printf("\n");
+    
+    ace_buffer_free(buf_a);
+    ace_buffer_free(buf_b);
+    ace_buffer_free(buf_c);
 }
-)";
 
-/* ============================================================================
- * 示例3: 使用内建数学函数
- * ============================================================================ */
-
-const char* kernel_sigmoid = R"(
-ACE_KERNEL(sigmoid, (int n, ACE_GLOBAL float* x, ACE_GLOBAL float* y))
-{
-    int i = ACE_GLOBAL_ID;
-    if (i < n) {
-        y[i] = 1.0f / (1.0f + ace_exp(-x[i]));
-    }
+static void test_sigmoid(ace_device_t dev) {
+    printf("\n--- Test: sigmoid ---\n");
+    
+    const int N = 5;
+    float h_in[] = {-2, -1, 0, 1, 2};
+    float h_out[5];
+    
+    ace_buffer_t buf_in, buf_out;
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_in);
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_out);
+    ace_buffer_write(buf_in, h_in, N * sizeof(float));
+    
+    int n = N;
+    void* args[] = {&n, buf_in, buf_out};
+    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    
+    ace_kernel_invoke(dev, _ace_get_kernel_sigmoid(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_finish(dev);
+    
+    ace_buffer_read(buf_out, h_out, N * sizeof(float));
+    
+    printf("  Input:  ");
+    for (int i = 0; i < N; i++) printf("%.1f ", h_in[i]);
+    printf("\n  Output: ");
+    for (int i = 0; i < N; i++) printf("%.3f ", h_out[i]);
+    printf("\n");
+    
+    ace_buffer_free(buf_in);
+    ace_buffer_free(buf_out);
 }
-)";
 
-/* ============================================================================
- * 示例4: 矩阵乘法 (分块算法)
- * ============================================================================ */
-
-const char* kernel_matmul = R"(
-ACE_KERNEL(matmul, 
-    (int M, int N, int K,
-     ACE_GLOBAL float* A, ACE_GLOBAL float* B, ACE_GLOBAL float* C))
-{
-    int row = ACE_GLOBAL_ID_X;
-    int col = ACE_GLOBAL_ID_Y;
+static void test_fill(ace_device_t dev) {
+    printf("\n--- Test: fill ---\n");
     
-    if (row < M && col < N) {
-        float sum = 0.0f;
-        for (int k = 0; k < K; k++) {
-            sum += A[row * K + k] * B[k * N + col];
-        }
-        C[row * N + col] = sum;
+    const int N = 5;
+    float h_out[5] = {0};
+    float fill_val = 3.14159f;
+    
+    ace_buffer_t buf_out;
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_out);
+    
+    int n = N;
+    void* args[] = {&n, &fill_val, buf_out};
+    int types[] = {ACE_VAL, ACE_VAL, ACE_BUF};
+    
+    ace_kernel_invoke(dev, _ace_get_kernel_fill(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_finish(dev);
+    
+    ace_buffer_read(buf_out, h_out, N * sizeof(float));
+    
+    int pass = 1;
+    for (int i = 0; i < N; i++) {
+        if (fabs(h_out[i] - fill_val) > 0.001f) pass = 0;
     }
+    printf("%s\n", pass ? "PASS" : "FAIL");
+    printf("  Results: ");
+    for (int i = 0; i < N; i++) printf("%.2f ", h_out[i]);
+    printf("\n");
+    
+    ace_buffer_free(buf_out);
 }
-)";
 
-/* ============================================================================
- * 示例5: 归约求和 (使用共享内存)
- * ============================================================================ */
-
-const char* kernel_reduce_sum = R"(
-ACE_KERNEL(reduce_sum, (int n, ACE_GLOBAL float* input, ACE_GLOBAL float* output))
-{
-    ACE_SHARED float shared[256];
+static void test_sqrt(ace_device_t dev) {
+    printf("\n--- Test: sqrt ---\n");
     
-    int tid = ACE_LOCAL_ID;
-    int gid = ACE_GLOBAL_ID;
-    int block_size = ACE_GROUP_SIZE;
+    const int N = 5;
+    float h_in[] = {1, 4, 9, 16, 25};
+    float h_out[5];
     
-    /* 加载数据到共享内存 */
-    shared[tid] = (gid < n) ? input[gid] : 0.0f;
-    ACE_BARRIER();
+    ace_buffer_t buf_in, buf_out;
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_in);
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_out);
+    ace_buffer_write(buf_in, h_in, N * sizeof(float));
     
-    /* 树形归约 */
-    for (int s = block_size / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            shared[tid] += shared[tid + s];
-        }
-        ACE_BARRIER();
-    }
+    int n = N;
+    void* args[] = {&n, buf_in, buf_out};
+    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
     
-    /* 写回结果 */
-    if (tid == 0) {
-        output[ACE_GROUP_ID] = shared[0];
-    }
+    ace_kernel_invoke(dev, _ace_get_kernel_sqrt(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_finish(dev);
+    
+    ace_buffer_read(buf_out, h_out, N * sizeof(float));
+    
+    printf("  Input:  ");
+    for (int i = 0; i < N; i++) printf("%.0f ", h_in[i]);
+    printf("\n  Output: ");
+    for (int i = 0; i < N; i++) printf("%.1f ", h_out[i]);
+    printf("\n");
+    
+    ace_buffer_free(buf_in);
+    ace_buffer_free(buf_out);
 }
-)";
 
-/* ============================================================================
- * 示例6: Softmax
- * ============================================================================ */
-
-const char* kernel_softmax = R"(
-ACE_KERNEL(softmax, (int batch_size, int seq_len, ACE_GLOBAL float* input, ACE_GLOBAL float* output))
-{
-    int batch = ACE_GLOBAL_ID;
+static void test_exp(ace_device_t dev) {
+    printf("\n--- Test: exp ---\n");
     
-    if (batch < batch_size) {
-        float* x = input + batch * seq_len;
-        float* y = output + batch * seq_len;
+    const int N = 4;
+    float h_in[] = {0, 1, 2, 3};
+    float h_out[4];
+    
+    ace_buffer_t buf_in, buf_out;
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_in);
+    ace_buffer_alloc(dev, N * sizeof(float), &buf_out);
+    ace_buffer_write(buf_in, h_in, N * sizeof(float));
+    
+    int n = N;
+    void* args[] = {&n, buf_in, buf_out};
+    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    
+    ace_kernel_invoke(dev, _ace_get_kernel_exp(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_finish(dev);
+    
+    ace_buffer_read(buf_out, h_out, N * sizeof(float));
+    
+    printf("  Input:  ");
+    for (int i = 0; i < N; i++) printf("%.0f ", h_in[i]);
+    printf("\n  Output: ");
+    for (int i = 0; i < N; i++) printf("%.3f ", h_out[i]);
+    printf("\n");
+    
+    ace_buffer_free(buf_in);
+    ace_buffer_free(buf_out);
+}
+
+int main() {
+    printf("========================================\n");
+    printf("  AgierCompute - User Kernels Demo\n");
+    printf("========================================\n");
+    fflush(stdout);
+    
+    /* 获取CPU设备 */
+    int count = 0;
+    ace_device_count(ACE_DEVICE_CPU, &count);
+    printf("CPU devices: %d\n", count);
+    
+    if (count > 0) {
+        ace_device_t dev = NULL;
+        ace_error_t err = ace_device_get(ACE_DEVICE_CPU, 0, &dev);
         
-        /* 找最大值 */
-        float max_val = x[0];
-        for (int i = 1; i < seq_len; i++) {
-            max_val = ace_max(max_val, x[i]);
-        }
-        
-        /* 计算exp并求和 */
-        float sum = 0.0f;
-        for (int i = 0; i < seq_len; i++) {
-            y[i] = ace_exp(x[i] - max_val);
-            sum += y[i];
-        }
-        
-        /* 归一化 */
-        for (int i = 0; i < seq_len; i++) {
-            y[i] /= sum;
+        if (err == ACE_OK && dev) {
+            ace_device_props_t props;
+            ace_device_props(dev, &props);
+            printf("Using: %s (%d threads)\n", props.name, props.compute_units);
+            
+            /* 运行所有测试 */
+            test_vec_mul(dev);
+            test_sigmoid(dev);
+            test_fill(dev);
+            test_sqrt(dev);
+            test_exp(dev);
+            
+            ace_device_release(dev);
+        } else {
+            printf("Failed to get device (err=%d)\n", err);
         }
     }
-}
-)";
-
-/* ============================================================================
- * 示例7: Layer Normalization
- * ============================================================================ */
-
-const char* kernel_layer_norm = R"(
-ACE_KERNEL(layer_norm, 
-    (int batch_size, int hidden_size, float eps,
-     ACE_GLOBAL float* x, ACE_GLOBAL float* gamma, ACE_GLOBAL float* beta, ACE_GLOBAL float* y))
-{
-    int batch = ACE_GLOBAL_ID;
     
-    if (batch < batch_size) {
-        float* px = x + batch * hidden_size;
-        float* py = y + batch * hidden_size;
-        
-        /* 计算均值 */
-        float mean = 0.0f;
-        for (int i = 0; i < hidden_size; i++) {
-            mean += px[i];
-        }
-        mean /= hidden_size;
-        
-        /* 计算方差 */
-        float var = 0.0f;
-        for (int i = 0; i < hidden_size; i++) {
-            float diff = px[i] - mean;
-            var += diff * diff;
-        }
-        var /= hidden_size;
-        
-        /* 归一化 */
-        float inv_std = 1.0f / ace_sqrt(var + eps);
-        for (int i = 0; i < hidden_size; i++) {
-            py[i] = (px[i] - mean) * inv_std * gamma[i] + beta[i];
-        }
-    }
-}
-)";
-
-/* ============================================================================
- * 示例8: GELU激活函数
- * ============================================================================ */
-
-const char* kernel_gelu = R"(
-ACE_KERNEL(gelu, (int n, ACE_GLOBAL float* x, ACE_GLOBAL float* y))
-{
-    int i = ACE_GLOBAL_ID;
-    if (i < n) {
-        float val = x[i];
-        /* GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³))) */
-        float c = ace_sqrt(2.0f / 3.14159265358979323846f);
-        y[i] = 0.5f * val * (1.0f + ace_tanh(c * (val + 0.044715f * val * val * val)));
-    }
-}
-)";
-
-/* ============================================================================
- * 示例9: 使用原子操作的直方图
- * ============================================================================ */
-
-const char* kernel_histogram = R"(
-ACE_KERNEL(histogram, (int n, int num_bins, ACE_GLOBAL float* data, ACE_GLOBAL int* bins))
-{
-    int i = ACE_GLOBAL_ID;
+    printf("\n========================================\n");
+    printf("  All tests completed!\n");
+    printf("========================================\n");
     
-    if (i < n) {
-        int bin = (int)(data[i] * num_bins);
-        bin = ace_clamp(bin, 0, num_bins - 1);
-        ace_atomic_add(&bins[bin], 1);
-    }
+    return 0;
 }
-)";

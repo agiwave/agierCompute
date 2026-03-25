@@ -22,6 +22,22 @@ if(CMAKE_CUDA_COMPILER)
         CUDA_AVAILABLE=1
     )
     
+    # 查找NVRTC库
+    find_library(NVRTC_LIB nvrtc HINTS 
+        /lib/x86_64-linux-gnu
+        /usr/lib/x86_64-linux-gnu
+        /usr/local/cuda/lib64
+        /usr/local/cuda/lib
+    )
+    
+    if(NVRTC_LIB)
+        message(STATUS "NVRTC library found: ${NVRTC_LIB}")
+        target_compile_definitions(ace_be_cuda PRIVATE NVRTC_AVAILABLE=1)
+        target_link_libraries(ace_be_cuda PRIVATE ${NVRTC_LIB})
+    else()
+        message(STATUS "NVRTC library not found - runtime compilation disabled")
+    endif()
+    
     # 链接 CUDA driver API
     if(WIN32)
         find_library(CUDA_DRIVER_LIB cuda PATHS 
@@ -38,10 +54,11 @@ if(CMAKE_CUDA_COMPILER)
     
     target_link_libraries(ace_be_cuda PRIVATE ace_core)
     
+    # 统一输出目录 - 与示例程序在同一目录
     set_target_properties(ace_be_cuda PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/$<CONFIG>"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     )
     
     install(TARGETS ace_be_cuda 

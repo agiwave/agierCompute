@@ -12,7 +12,14 @@ target_include_directories(ace_be_cpu
 )
 
 target_compile_definitions(ace_be_cpu PRIVATE ACE_BACKEND_EXPORTS)
-target_link_libraries(ace_be_cpu PRIVATE ace_core)
+target_link_libraries(ace_be_cpu PRIVATE ace_core m)  # 添加数学库
+
+# 统一输出目录 - 与示例程序在同一目录
+set_target_properties(ace_be_cpu PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
 
 if(MSVC)
     target_compile_options(ace_be_cpu PRIVATE /W3 /D_CRT_SECURE_NO_WARNINGS)

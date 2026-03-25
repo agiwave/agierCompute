@@ -19,6 +19,7 @@
     #define CLOSE_LIB(h)   FreeLibrary(h)
 #else
     #include <dlfcn.h>
+    #include <unistd.h>
     #define DYNLIB         void*
     #define LOAD_LIB(n)    dlopen(n, RTLD_NOW)
     #define GET_SYM(h, n)  dlsym(h, n)
@@ -70,7 +71,17 @@ static struct {
     int count;
     int inited;
     int auto_init_attempted;
+    ace_log_level_t log_level;
 } g_engine;
+
+/* 日志控制 */
+void ace_set_log_level(ace_log_level_t level) {
+    g_engine.log_level = level;
+}
+
+ace_log_level_t ace_get_log_level(void) {
+    return g_engine.log_level;
+}
 
 /* ============================================================================
  * 后端加载
@@ -80,7 +91,9 @@ static void load_backend(const char* path) {
     if (g_engine.count >= 16) return;
     
     DYNLIB h = LOAD_LIB(path);
-    if (!h) return;
+    if (!h) {
+        return;
+    }
     
     typedef ace_backend_info_t* (*get_backend_fn)(void);
     typedef ace_backend_ops_t* (*get_ops_fn)(void);
@@ -93,12 +106,16 @@ static void load_backend(const char* path) {
     }
     
     if (!get_backend) {
+        printf("[ACE] No get_backend symbol found\n");
+        fflush(stdout);
         CLOSE_LIB(h);
         return;
     }
     
     ace_backend_info_t* info = get_backend();
     if (!info) {
+        printf("[ACE] get_backend returned NULL\n");
+        fflush(stdout);
         CLOSE_LIB(h);
         return;
     }
@@ -116,6 +133,8 @@ static void load_backend(const char* path) {
     }
     
     if (!ops) {
+        printf("[ACE] No ops found for backend: %s\n", info->name);
+        fflush(stdout);
         CLOSE_LIB(h);
         return;
     }
@@ -156,8 +175,35 @@ static void scan_dir(const char* dir) {
     FindClose(h);
 }
 #else
+#include <dirent.h>
 static void scan_dir(const char* dir) {
-    /* POSIX: 使用 opendir/readdir */
+    DIR* d = opendir(dir);
+    if (!d) return;
+    
+    struct dirent* entry;
+    while ((entry = readdir(d)) != NULL) {
+        /* 查找 ace_be_*.so 或 libace_be_*.so 文件 */
+        const char* name = entry->d_name;
+        int is_backend = 0;
+        
+        if (strncmp(name, "ace_be_", 7) == 0) {
+            is_backend = 1;
+            name += 7;  /* 跳过 ace_be_ */
+        } else if (strncmp(name, "libace_be_", 10) == 0) {
+            is_backend = 1;
+            name += 10;  /* 跳过 libace_be_ */
+        }
+        
+        if (is_backend) {
+            const char* ext = strrchr(entry->d_name, '.');
+            if (ext && strcmp(ext, ".so") == 0) {
+                char path[1024];
+                snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+                load_backend(path);
+            }
+        }
+    }
+    closedir(d);
 }
 #endif
 
@@ -181,6 +227,38 @@ static void auto_init(void) {
         *last_slash = '\0';
         scan_dir(exe_path);
     }
+#else
+    /* Linux: 搜索多个目录 */
+    const char* search_dirs[] = {
+        NULL,  /* 可执行文件目录，动态获取 */
+        "./lib",
+        "./bin",
+        "../lib",
+        "../bin",
+        "/usr/local/lib/ace",
+        "/usr/lib/ace",
+        NULL
+    };
+    
+    /* 获取可执行文件所在目录 */
+    char exe_path[1024] = {0};
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0) {
+        exe_path[len] = '\0';
+        char* last_slash = strrchr(exe_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            search_dirs[0] = exe_path;
+        }
+    }
+    
+    /* 遍历所有搜索目录 */
+    for (int i = 0; search_dirs[i] != NULL; i++) {
+        scan_dir(search_dirs[i]);
+    }
+    
+    /* 同时搜索当前工作目录 */
+    scan_dir(".");
 #endif
     
     g_engine.inited = 1;
@@ -215,7 +293,7 @@ static void ace_shutdown(void) {
 
 static backend_entry_t* find_backend(ace_device_type_t type) {
     for (int i = 0; i < g_engine.count; i++) {
-        if (g_engine.list[i].info->type == type) {
+        if (g_engine.list[i].info->type == (ace_backend_device_type_t)type) {
             return &g_engine.list[i];
         }
     }
@@ -360,7 +438,7 @@ ace_kernel_t ace_register_kernel(const char* name, const char* src) {
     for (int i = 0; i < MAX_KERNEL_TEMPLATES; i++) {
         if (!g_templates[i].in_use) {
             strncpy(g_templates[i].name, name, sizeof(g_templates[i].name) - 1);
-            g_templates[i].src = _strdup(src);
+            g_templates[i].src = strdup(src);
             g_templates[i].in_use = 1;
             return (ace_kernel_t)(intptr_t)(i + 1);
         }

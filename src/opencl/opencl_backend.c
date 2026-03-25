@@ -206,7 +206,7 @@ static ace_error_t ocl_device_props(void* dev, void* props) {
     ace_device_props_t* p = (ace_device_props_t*)props;
     if (!d || !p) return ACE_ERROR_DEVICE;
     
-    p->type = ACE_DEVICE_OPENCL;
+    p->type = ACE_BACKEND_DEVICE_OPENCL;
     strncpy(p->name, d->name, sizeof(p->name) - 1);
     strcpy(p->vendor, "OpenCL");
     p->total_memory = d->total_mem;
@@ -290,7 +290,7 @@ static ace_error_t ocl_kernel_compile(void* dev, const char* name, const char* s
     if (err != CL_SUCCESS) {
         clReleaseProgram(prog);
         free(translated);
-        if (err_msg) *err_msg = _strdup("Failed to create kernel");
+        if (err_msg) *err_msg = strdup("Failed to create kernel");
         return ACE_ERROR_COMPILE;
     }
     
@@ -299,7 +299,7 @@ static ace_error_t ocl_kernel_compile(void* dev, const char* name, const char* s
     ocl_kernel_t* k = (ocl_kernel_t*)calloc(1, sizeof(*k));
     k->kernel = krn;
     k->program = prog;
-    k->name = _strdup(name);
+    k->name = strdup(name);
     k->device = d;
     
     *kernel = k;
@@ -358,13 +358,13 @@ static ace_backend_ops_t ocl_ops = {
     .kernel_launch = ocl_kernel_launch,
 };
 
-ACE_DEFINE_BACKEND(ACE_DEVICE_OPENCL, "OpenCL", &ocl_ops)
+ACE_DEFINE_BACKEND(ACE_BACKEND_DEVICE_OPENCL, "OpenCL", &ocl_ops)
 
 #else
 
 /* OpenCL SDK not available - provide stub */
 static ace_backend_ops_t ocl_ops = {0};
 
-ACE_DEFINE_BACKEND(ACE_DEVICE_OPENCL, "OpenCL (unavailable)", &ocl_ops)
+ACE_DEFINE_BACKEND(ACE_BACKEND_DEVICE_OPENCL, "OpenCL (unavailable)", &ocl_ops)
 
 #endif /* OPENCL_AVAILABLE */

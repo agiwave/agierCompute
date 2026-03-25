@@ -14,6 +14,13 @@ target_include_directories(ace_core
 
 target_compile_definitions(ace_core PRIVATE ACE_CORE_EXPORTS)
 
+# 统一输出目录
+set_target_properties(ace_core PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 if(MSVC)
     target_compile_options(ace_core PRIVATE /W3)
 else()
