@@ -265,6 +265,11 @@ static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* 
         if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
         else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
         else if (strcmp(suffix, "long") == 0 || strcmp(suffix, "int64") == 0) type_name = "long";
+        else if (strcmp(suffix, "half") == 0 || strcmp(suffix, "float16") == 0) type_name = "half";
+        else if (strcmp(suffix, "bfloat16") == 0) type_name = "nv_bfloat16";
+        else if (strcmp(suffix, "char") == 0 || strcmp(suffix, "int8") == 0) type_name = "char";
+        else if (strcmp(suffix, "uchar") == 0 || strcmp(suffix, "uint8") == 0) type_name = "unsigned char";
+        else if (strcmp(suffix, "short") == 0 || strcmp(suffix, "int16") == 0) type_name = "short";
     }
 
     char* cuda_src = translate_to_cuda(name, src, type_name);

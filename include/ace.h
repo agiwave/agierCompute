@@ -112,7 +112,31 @@ typedef enum {
     ACE_DTYPE_FLOAT64 = 1,
     ACE_DTYPE_INT32   = 2,
     ACE_DTYPE_INT64   = 3,
+    /* AI 重要数据类型 */
+    ACE_DTYPE_FLOAT16 = 4,  /* FP16 - 半精度浮点 */
+    ACE_DTYPE_BFLOAT16 = 5, /* BF16 - Brain 浮点 */
+    ACE_DTYPE_INT8    = 6,  /* INT8 - 8 位整数 */
+    ACE_DTYPE_UINT8   = 7,  /* UINT8 - 8 位无符号整数 */
+    ACE_DTYPE_INT16   = 8,  /* INT16 - 16 位整数 */
+    ACE_DTYPE_BOOL    = 9,  /* BOOL - 布尔值 */
 } ace_dtype_t;
+
+/* 数据类型大小辅助函数 */
+static inline size_t ace_dtype_size(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:  return 4;
+        case ACE_DTYPE_FLOAT64:  return 8;
+        case ACE_DTYPE_INT32:    return 4;
+        case ACE_DTYPE_INT64:    return 8;
+        case ACE_DTYPE_FLOAT16:  return 2;
+        case ACE_DTYPE_BFLOAT16: return 2;
+        case ACE_DTYPE_INT8:     return 1;
+        case ACE_DTYPE_UINT8:    return 1;
+        case ACE_DTYPE_INT16:    return 2;
+        case ACE_DTYPE_BOOL:     return 1;
+        default:                 return 4;
+    }
+}
 
 /* ============================================================================
  * 设备属性
@@ -278,14 +302,62 @@ ACE_API ace_error_t ace_finish(ace_device_t dev);
 
 /* 获取数据类型名称 */
 static inline const char* ace_dtype_name(ace_dtype_t dtype) {
-    static const char* names[] = {"float", "double", "int", "long"};
-    return names[dtype];
+    static const char* names[] = {
+        "float",    /* FLOAT32 */
+        "double",   /* FLOAT64 */
+        "int",      /* INT32 */
+        "long",     /* INT64 */
+        "half",     /* FLOAT16 */
+        "bfloat16", /* BFLOAT16 */
+        "char",     /* INT8 */
+        "uchar",    /* UINT8 */
+        "short",    /* INT16 */
+        "bool"      /* BOOL */
+    };
+    if (dtype >= 0 && dtype <= 9) return names[dtype];
+    return "float";
 }
 
-/* 获取数据类型大小 */
-static inline size_t ace_dtype_size(ace_dtype_t dtype) {
-    static const size_t sizes[] = {4, 8, 4, 8};
-    return sizes[dtype];
+/* FP16 (float16) 转换辅助函数 */
+typedef uint16_t ace_float16_t;
+
+static inline ace_float16_t float_to_float16(float f) {
+    union { float f; uint32_t u; } u = {f};
+    uint32_t sign = (u.u >> 16) & 0x8000;
+    int32_t exp = ((u.u >> 23) & 0xff) - 127 + 15;
+    uint32_t frac = (u.u >> 13) & 0x3ff;
+    
+    if (exp <= 0) return (ace_float16_t)sign;
+    if (exp >= 31) return (ace_float16_t)(sign | 0x7c00);
+    return (ace_float16_t)(sign | (exp << 10) | frac);
+}
+
+static inline float float16_to_float(ace_float16_t h) {
+    uint32_t sign = (h & 0x8000) << 16;
+    uint32_t exp = ((h & 0x7c00) >> 10);
+    uint32_t frac = (h & 0x03ff) << 13;
+    
+    if (exp == 0) exp = 0;
+    else if (exp == 31) exp = 255;
+    else exp += 127 - 15;
+    
+    union { float f; uint32_t u; } u;
+    u.u = sign | (exp << 23) | frac;
+    return u.f;
+}
+
+/* BF16 (bfloat16) 转换辅助函数 */
+typedef uint16_t ace_bfloat16_t;
+
+static inline ace_bfloat16_t float_to_bfloat16(float f) {
+    union { float f; uint32_t u; } u = {f};
+    return (ace_bfloat16_t)(u.u >> 16);
+}
+
+static inline float bfloat16_to_float(ace_bfloat16_t h) {
+    union { float f; uint32_t u; } u;
+    u.u = (uint32_t)h << 16;
+    return u.f;
 }
 
 /* 获取错误描述 */

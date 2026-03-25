@@ -39,6 +39,12 @@ target_include_directories(test_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_kernels PRIVATE ace_core m)
 set_target_properties(test_kernels PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# 8. 数据类型测试 - 测试 FLOAT16/BFLOAT16/INT8 等
+add_executable(test_dtypes test_dtypes.c)
+target_include_directories(test_dtypes PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_dtypes PRIVATE ace_core m)
+set_target_properties(test_dtypes PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # 6. 用户自定义内核示例
 add_executable(example_user_kernels user_kernels.c)
 target_include_directories(example_user_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
@@ -56,7 +62,7 @@ set_target_properties(demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_D
 # ============================================================================
 
 if(NOT WIN32)
-    set_target_properties(simple_test test_cuda test_opencl test_vulkan test_kernels 
+    set_target_properties(simple_test test_cuda test_opencl test_vulkan test_kernels test_dtypes
                           example_user_kernels demo PROPERTIES
         BUILD_RPATH "${CMAKE_BINARY_DIR}/bin;${CMAKE_BINARY_DIR}/lib"
         INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN"
@@ -102,6 +108,13 @@ set_tests_properties(AllKernels PROPERTIES
     TIMEOUT 600
 )
 
+# 数据类型测试
+add_test(NAME DataTypeTests COMMAND test_dtypes)
+set_tests_properties(DataTypeTests PROPERTIES
+    LABELS "All;DataTypes"
+    TIMEOUT 300
+)
+
 # ============================================================================
 # 自定义测试目标
 # ============================================================================
@@ -123,16 +136,16 @@ add_custom_target(test-backends
 # 运行所有内核测试
 add_custom_target(test-all
     COMMAND ${CMAKE_CTEST_COMMAND} -L "All" --output-on-failure
-    DEPENDS test_kernels
-    COMMENT "Running all kernel tests..."
+    DEPENDS test_kernels test_dtypes
+    COMMENT "Running all kernel and data type tests..."
 )
 
 # ============================================================================
 # 安装规则
 # ============================================================================
 
-install(TARGETS 
-    simple_test test_cuda test_opencl test_vulkan test_kernels
+install(TARGETS
+    simple_test test_cuda test_opencl test_vulkan test_kernels test_dtypes
     example_user_kernels demo
     RUNTIME DESTINATION bin
 )
