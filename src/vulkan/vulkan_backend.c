@@ -284,19 +284,31 @@ static ace_error_t vk_device_get(int idx, void** dev) {
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &qinfo
     };
-    
-    if (vkCreateDevice(d->physical_device, &dev_info, NULL, &d->device) != VK_SUCCESS) {
+
+    VkResult device_result = vkCreateDevice(d->physical_device, &dev_info, NULL, &d->device);
+    if (device_result != VK_SUCCESS || d->device == VK_NULL_HANDLE) {
+        fprintf(stderr, "[Vulkan] Failed to create logical device: %d\n", device_result);
         free(d); free(devices); return ACE_ERROR_DEVICE;
     }
-    
+
     vkGetDeviceQueue(d->device, d->queue_family, 0, &d->queue);
-    
+    if (d->queue == VK_NULL_HANDLE) {
+        fprintf(stderr, "[Vulkan] Failed to get device queue\n");
+        vkDestroyDevice(d->device, NULL);
+        free(d); free(devices); return ACE_ERROR_DEVICE;
+    }
+
     VkCommandPoolCreateInfo pool_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .queueFamilyIndex = d->queue_family
     };
-    vkCreateCommandPool(d->device, &pool_info, NULL, &d->cmd_pool);
-    
+    VkResult pool_result = vkCreateCommandPool(d->device, &pool_info, NULL, &d->cmd_pool);
+    if (pool_result != VK_SUCCESS || d->cmd_pool == VK_NULL_HANDLE) {
+        fprintf(stderr, "[Vulkan] Failed to create command pool: %d\n", pool_result);
+        vkDestroyDevice(d->device, NULL);
+        free(d); free(devices); return ACE_ERROR_DEVICE;
+    }
+
     printf("[Vulkan] Device: %s\n", d->props.deviceName);
     free(devices);
     *dev = d;
@@ -447,14 +459,19 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
         bindings[i].descriptorCount = 1;
         bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
-    
+
     VkDescriptorSetLayoutCreateInfo dsl_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = n_buffers,
         .pBindings = bindings
     };
+    
+    /* Intel GPU 需要指定 VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT */
     VkDescriptorSetLayout desc_layout;
-    vkCreateDescriptorSetLayout(d->device, &dsl_info, NULL, &desc_layout);
+    VkResult layout_result = vkCreateDescriptorSetLayout(d->device, &dsl_info, NULL, &desc_layout);
+    if (layout_result != VK_SUCCESS) {
+        fprintf(stderr, "[Vulkan] Failed to create descriptor set layout: %d\n", layout_result);
+    }
     free(bindings);
     
     /* Create push constant range */

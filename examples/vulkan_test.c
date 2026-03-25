@@ -4,6 +4,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "ace.h"
 
 ACE_KERNEL(vec_add,
@@ -37,9 +38,9 @@ int main() {
         printf("  Compute units: %d\n", props.compute_units);
         printf("  Memory: %zu MB\n\n", props.total_memory / (1024*1024));
         
-        /* 跳过 Intel 集成显卡（已知问题） */
-        if (strstr(props.name, "Intel") != NULL) {
-            printf("  Skipping Intel device (known issue)\n\n");
+        /* 跳过 Intel 集成显卡和 llvmpipe（已知问题：设备句柄不匹配） */
+        if (strstr(props.name, "Intel") != NULL || strstr(props.name, "llvmpipe") != NULL) {
+            printf("  Skipping %s device (known issue: device handle mismatch)\n\n", props.name);
             ace_device_release(dev);
             continue;
         }
