@@ -4,8 +4,8 @@ project(ace_core VERSION 1.0.0 LANGUAGES C)
 
 add_library(ace_core SHARED engine.c)
 
-target_include_directories(ace_core 
-    PUBLIC 
+target_include_directories(ace_core
+    PUBLIC
         ${CMAKE_SOURCE_DIR}/include
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
@@ -13,6 +13,11 @@ target_include_directories(ace_core
 )
 
 target_compile_definitions(ace_core PRIVATE ACE_CORE_EXPORTS)
+
+# Linux 下需要 dl 库用于动态加载
+if(NOT WIN32)
+    target_link_libraries(ace_core PRIVATE dl)
+endif()
 
 # 统一输出目录
 set_target_properties(ace_core PROPERTIES
