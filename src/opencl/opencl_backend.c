@@ -45,62 +45,98 @@ static cl_platform_id g_platform;
  * ACE -> OpenCL translation
  * ============================================================================ */
 
-static char* translate_to_opencl(const char* name, const char* src) {
-    const char* params_start = strchr(src, '(');
-    const char* params_end = strchr(src, ')');
-    const char* body_start = strchr(src, '{');
-    const char* body_end = strrchr(src, '}');
+static char* translate_to_opencl(const char* name, const char* src, const char* type_name) {
+    /* 替换 T 为实际类型 */
+    char* code = strdup(src);
+    if (!code) return NULL;
     
+    char* p;
+    while ((p = strstr(code, "T")) != NULL) {
+        int is_type = 1;
+        if (p > code) {
+            char prev = p[-1];
+            if ((prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') ||
+                (prev >= '0' && prev <= '9') || prev == '_') is_type = 0;
+        }
+        if (p[1]) {
+            char next = p[1];
+            if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+                (next >= '0' && next <= '9') || next == '_') is_type = 0;
+        }
+        
+        if (is_type) {
+            size_t rest_len = strlen(p + 1);
+            size_t type_len = strlen(type_name);
+            char* new_code = malloc(strlen(code) + type_len);
+            if (!new_code) { free(code); return NULL; }
+            
+            *p = '\0';
+            strcpy(new_code, code);
+            strcat(new_code, type_name);
+            strcat(new_code, p + 1);
+            free(code);
+            code = new_code;
+        } else {
+            p++;
+        }
+    }
+    
+    const char* params_start = strchr(code, '(');
+    const char* params_end = strchr(code, ')');
+    const char* body_start = strchr(code, '{');
+    const char* body_end = strrchr(code, '}');
+
     if (!params_start || !params_end || !body_start || !body_end) {
+        free(code);
         char* out = (char*)malloc(256);
         snprintf(out, 256, "__kernel void %s() { int GID = get_global_id(0); }\n", name);
         return out;
     }
-    
+
     /* Process parameters - add __global to pointer types */
     size_t params_len = params_end - params_start + 1;
     char* new_params = (char*)malloc(params_len * 2);
-    
-    const char* p = params_start;
+
+    const char* p2 = params_start;
     char* dst = new_params;
-    
-    while (p <= params_end) {
-        const char* star = strchr(p, '*');
-        const char* next_delim = strchr(p, ',');
-        const char* paren = strchr(p, ')');
-        
+
+    while (p2 <= params_end) {
+        const char* star = strchr(p2, '*');
+        const char* next_delim = strchr(p2, ',');
+        const char* paren = strchr(p2, ')');
+
         if (!next_delim || (paren && paren < next_delim)) next_delim = paren;
-        
+
         if (star && next_delim && star < next_delim) {
             /* Add __global before pointer parameter */
-            const char* type_start = p + 1;
-            while (type_start < star && 
-                   (*type_start == ' ' || *type_start == '\t' || 
+            const char* type_start = p2 + 1;
+            while (type_start < star &&
+                   (*type_start == ' ' || *type_start == '\t' ||
                     *type_start == ',' || *type_start == '(')) {
                 *dst++ = *type_start++;
             }
-            
+
             if (type_start < star) {
                 strcpy(dst, "__global ");
                 dst += 9;
-                
+
                 while (type_start <= params_end && *type_start != ',') {
                     *dst++ = *type_start++;
                     if (*type_start == ')') break;
                 }
-                p = type_start;
+                p2 = type_start;
                 continue;
             }
         }
-        *dst++ = *p++;
+        *dst++ = *p2++;
     }
     *dst = '\0';
-    
+
     size_t body_len = body_end - body_start - 1;
-    
+
     size_t total_len = strlen(name) + strlen(new_params) + body_len + 256;
     char* out = (char*)malloc(total_len);
-    
+
     snprintf(out, total_len,
         "__kernel void %s%s\n"
         "{\n"
@@ -110,8 +146,9 @@ static char* translate_to_opencl(const char* name, const char* src) {
         name, new_params,
         (int)body_len, body_start + 1
     );
-    
+
     free(new_params);
+    free(code);
     return out;
 }
 
@@ -261,8 +298,18 @@ static ace_error_t ocl_finish(void* dev) {
 static ace_error_t ocl_kernel_compile(void* dev, const char* name, const char* src,
                                        void** kernel, char** err_msg) {
     ocl_device_t* d = (ocl_device_t*)dev;
-    
-    char* translated = translate_to_opencl(name, src);
+
+    /* 确定数据类型 */
+    const char* type_name = "float";
+    const char* suffix = strrchr(name, '_');
+    if (suffix) {
+        suffix++;
+        if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
+        else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
+        else if (strcmp(suffix, "long") == 0 || strcmp(suffix, "int64") == 0) type_name = "long";
+    }
+
+    char* translated = translate_to_opencl(name, src, type_name);
     
     cl_int err;
     const char* srcs[1] = { translated };
