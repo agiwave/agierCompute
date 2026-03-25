@@ -64,6 +64,15 @@ typedef struct {
 static VkInstance g_instance = VK_NULL_HANDLE;
 static int g_initialized = 0;
 
+static vk_cached_kernel_t* find_cached_kernel(vk_device_internal_t* dev_int, const char* name) {
+    for (int i = 0; i < dev_int->kernel_count; i++) {
+        if (strcmp(dev_int->kernels[i].name, name) == 0) {
+            return &dev_int->kernels[i];
+        }
+    }
+    return NULL;
+}
+
 /* ============================================================================
  * GLSL translation
  * ============================================================================ */
@@ -632,7 +641,10 @@ static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
         int scalar_idx = 0;
         for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
             if (sizes[i] == ACE_ARG_VALUE) {
-                scalars[scalar_idx++] = *(float*)args[i];
+                /* Read as int (most common for loop counters and sizes) */
+                int ival = *(int*)args[i];
+                scalars[scalar_idx] = (float)ival;
+                scalar_idx++;
             }
         }
     }

@@ -78,7 +78,14 @@ static void load_backend(const char* path) {
     if (g_engine.count >= 16) return;
 
     DYNLIB h = LOAD_LIB(path);
-    if (!h) return;
+    if (!h) {
+#ifdef _WIN32
+        printf("[ACE] Failed to load: %s (error=%lu)\n", path, GetLastError());
+#else
+        printf("[ACE] Failed to load: %s (%s)\n", path, dlerror());
+#endif
+        return;
+    }
 
     typedef ace_backend_info_t* (*get_backend_fn)(void);
     typedef ace_backend_ops_t* (*get_ops_fn)(void);
@@ -87,10 +94,16 @@ static void load_backend(const char* path) {
     get_ops_fn get_ops = (get_ops_fn)GET_SYM(h, "ace_get_backend_ops");
 
     if (!get_backend) get_backend = (get_backend_fn)GET_SYM(h, "ace_backend_info");
-    if (!get_backend) { CLOSE_LIB(h); return; }
+    if (!get_backend) {
+        CLOSE_LIB(h);
+        return;
+    }
 
     ace_backend_info_t* info = get_backend();
-    if (!info) { CLOSE_LIB(h); return; }
+    if (!info) {
+        CLOSE_LIB(h);
+        return;
+    }
 
     /* 检查是否已加载 */
     for (int i = 0; i < g_engine.count; i++) {
@@ -101,11 +114,17 @@ static void load_backend(const char* path) {
     }
 
     ace_backend_ops_t* ops = get_ops ? get_ops() : NULL;
-    if (!ops) { CLOSE_LIB(h); return; }
-
-    if (ops->init && ops->init(info) != 0) {
+    if (!ops) {
         CLOSE_LIB(h);
         return;
+    }
+
+    if (ops->init) {
+        ace_error_t err = ops->init(info);
+        if (err != 0) {
+            CLOSE_LIB(h);
+            return;
+        }
     }
 
     printf("[ACE] Loaded: %s\n", info->name);
@@ -155,6 +174,7 @@ static void scan_dir(const char* dir) {
             if (ext && strcmp(ext, ".so") == 0) {
                 char path[1024];
                 snprintf(path, sizeof(path), "%s/%s", dir, name);
+                printf("[ACE] Found backend: %s\n", path);
                 load_backend(path);
             }
         }

@@ -44,9 +44,9 @@ int test_device(ace_device_t dev, int idx) {
 
     printf("  Running kernel... ");
     fflush(stdout);
-    
+
     ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
-    
+
     if (err != ACE_OK) {
         printf("FAILED (err=%d)\n", err);
         ace_finish(dev);
@@ -57,10 +57,19 @@ int test_device(ace_device_t dev, int idx) {
         ace_device_release(dev);
         return 0;
     }
-    
+
     printf("OK\n");
     ace_finish(dev);
-    ace_buffer_read(buf_c, h_c, N * sizeof(float));
+    ace_error_t read_err = ace_buffer_read(buf_c, h_c, N * sizeof(float));
+    if (read_err != ACE_OK) {
+        printf("  Read failed: %d\n", read_err);
+        free(h_a); free(h_b); free(h_c);
+        ace_buffer_free(buf_a);
+        ace_buffer_free(buf_b);
+        ace_buffer_free(buf_c);
+        ace_device_release(dev);
+        return 0;
+    }
 
     int pass = 1;
     for (int i = 0; i < 10; i++) {
