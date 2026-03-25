@@ -41,12 +41,18 @@ typedef struct {
     VkPipelineLayout layout;
     VkDescriptorSetLayout desc_layout;
     VkDescriptorPool desc_pool;
-    VkDescriptorSet desc_set;
     int n_buffers;
     int n_scalars;
     char* name;
+    char* src;  /* 源代码，用于每设备编译 */
+    ace_dtype_t dtype;
+} vk_kernel_template_t;
+
+typedef struct {
+    VkDescriptorSet desc_set;
     vk_device_t* dev;
-} vk_kernel_t;
+    vk_kernel_template_t* template;
+} vk_kernel_instance_t;
 
 static VkInstance g_instance = VK_NULL_HANDLE;
 static int g_initialized = 0;
@@ -404,7 +410,7 @@ static ace_error_t vk_finish(void* dev) {
 static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* src,
                                       void** kernel, char** err_msg) {
     vk_device_t* d = (vk_device_t*)dev;
-    
+
     /* Translate to GLSL */
     ace_dtype_t dtype = ACE_DTYPE_FLOAT32;
     const char* suffix = strrchr(name, '_');
@@ -413,14 +419,14 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
         if (strcmp(suffix, "int") == 0) dtype = ACE_DTYPE_INT32;
         else if (strcmp(suffix, "double") == 0) dtype = ACE_DTYPE_FLOAT64;
     }
-    
+
     int n_buffers = 0, n_scalars = 0;
     char* glsl = translate_to_glsl(name, src, dtype, &n_buffers, &n_scalars);
-    
+
     /* Compile to SPIRV */
     shaderc_compilation_result_t result = shaderc_compile_into_spv(
         g_shaderc, glsl, strlen(glsl), shaderc_compute_shader, name, "main", NULL);
-    
+
     if (shaderc_result_get_compilation_status(result) != shaderc_compilation_status_success) {
         if (err_msg) {
             const char* err = shaderc_result_get_error_message(result);
@@ -430,10 +436,10 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
         free(glsl);
         return ACE_ERROR_COMPILE;
     }
-    
+
     const uint32_t* spirv = (const uint32_t*)shaderc_result_get_bytes(result);
     size_t spirv_size = shaderc_result_get_length(result);
-    
+
     /* Create shader module */
     VkShaderModuleCreateInfo sm_info = {
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -444,12 +450,12 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
     VkResult vkres = vkCreateShaderModule(d->device, &sm_info, NULL, &shader);
     shaderc_result_release(result);
     free(glsl);
-    
+
     if (vkres != VK_SUCCESS) {
         if (err_msg) *err_msg = strdup("Failed to create shader module");
         return ACE_ERROR_COMPILE;
     }
-    
+
     /* Create descriptor set layout */
     VkDescriptorSetLayoutBinding* bindings = (VkDescriptorSetLayoutBinding*)calloc(
         n_buffers, sizeof(VkDescriptorSetLayoutBinding));
@@ -466,14 +472,16 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
         .pBindings = bindings
     };
     
-    /* Intel GPU 需要指定 VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT */
     VkDescriptorSetLayout desc_layout;
     VkResult layout_result = vkCreateDescriptorSetLayout(d->device, &dsl_info, NULL, &desc_layout);
     if (layout_result != VK_SUCCESS) {
-        fprintf(stderr, "[Vulkan] Failed to create descriptor set layout: %d\n", layout_result);
+        if (err_msg) *err_msg = strdup("Failed to create descriptor set layout");
+        free(bindings);
+        vkDestroyShaderModule(d->device, shader, NULL);
+        return ACE_ERROR_COMPILE;
     }
     free(bindings);
-    
+
     /* Create push constant range */
     VkPushConstantRange pc_range = {0};
     VkPipelineLayoutCreateInfo pl_info = {
@@ -481,18 +489,18 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
         .setLayoutCount = 1,
         .pSetLayouts = &desc_layout
     };
-    
+
     if (n_scalars > 0) {
         pc_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         pc_range.offset = 0;
-        pc_range.size = n_scalars * sizeof(float);  /* All scalars as float */
+        pc_range.size = n_scalars * sizeof(float);
         pl_info.pushConstantRangeCount = 1;
         pl_info.pPushConstantRanges = &pc_range;
     }
-    
+
     VkPipelineLayout layout;
     vkCreatePipelineLayout(d->device, &pl_info, NULL, &layout);
-    
+
     /* Create pipeline */
     VkPipelineShaderStageCreateInfo stage = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -508,14 +516,14 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
     VkPipeline pipeline;
     vkCreateComputePipelines(d->device, VK_NULL_HANDLE, 1, &pipe_info, NULL, &pipeline);
     vkDestroyShaderModule(d->device, shader, NULL);
-    
+
     /* Create descriptor pool - one entry per binding */
     VkDescriptorPoolSize* pool_sizes = (VkDescriptorPoolSize*)calloc(n_buffers, sizeof(VkDescriptorPoolSize));
     for (int i = 0; i < n_buffers; i++) {
         pool_sizes[i].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         pool_sizes[i].descriptorCount = 1;
     }
-    
+
     VkDescriptorPoolCreateInfo dp_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = 1,
@@ -525,7 +533,7 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
     VkDescriptorPool desc_pool;
     vkCreateDescriptorPool(d->device, &dp_info, NULL, &desc_pool);
     free(pool_sizes);
-    
+
     /* Allocate descriptor set */
     VkDescriptorSet desc_set = VK_NULL_HANDLE;
     if (n_buffers > 0) {
@@ -537,20 +545,20 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
         };
         vkAllocateDescriptorSets(d->device, &ds_alloc, &desc_set);
     }
-    
-    /* Create kernel */
-    vk_kernel_t* k = (vk_kernel_t*)calloc(1, sizeof(*k));
-    k->pipeline = pipeline;
-    k->layout = layout;
-    k->desc_layout = desc_layout;
-    k->desc_pool = desc_pool;
-    k->desc_set = desc_set;
-    k->n_buffers = n_buffers;
-    k->n_scalars = n_scalars;
-    k->name = strdup(name);
-    k->dev = d;
-    
-    *kernel = k;
+
+    /* Create kernel TEMPLATE (not bound to any device) */
+    vk_kernel_template_t* kt = (vk_kernel_template_t*)calloc(1, sizeof(*kt));
+    kt->pipeline = pipeline;
+    kt->layout = layout;
+    kt->desc_layout = desc_layout;
+    kt->desc_pool = desc_pool;
+    kt->n_buffers = n_buffers;
+    kt->n_scalars = n_scalars;
+    kt->name = strdup(name);
+    kt->src = strdup(src);
+    kt->dtype = dtype;
+
+    *kernel = kt;
     return ACE_OK;
 }
 #else
