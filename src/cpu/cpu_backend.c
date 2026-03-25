@@ -105,7 +105,8 @@ static void thread_pool_init(int num_threads) {
         GetSystemInfo(&sysinfo);
         num_threads = sysinfo.dwNumberOfProcessors;
 #else
-        num_threads = sysconf(_SC_NPROCESSORS_ONLN);
+        long n = sysconf(_SC_NPROCESSORS_ONLN);
+        num_threads = (n > 0) ? n : 4;
 #endif
     }
     if (num_threads <= 0) num_threads = 4;
