@@ -40,40 +40,19 @@ const char* cuda_get_type_headers(ace_dtype_t dtype) {
 
 /* 获取 CUDA 类型转换宏 */
 const char* cuda_get_type_macros(ace_dtype_t dtype) {
-    // switch (dtype) {
-    //     case ACE_DTYPE_FLOAT16:
-    //         return
-    //             "/* FP16 辅助宏 */\n"
-    //             "#define ACE_HALF_ADD(a, b) __hadd(a, b)\n"
-    //             "#define ACE_HALF_MUL(a, b) __hmul(a, b)\n"
-    //             "#define ACE_HALF_SUB(a, b) __hsub(a, b)\n"
-    //             "#define ACE_HALF_DIV(a, b) __hdiv(a, b)\n"
-    //             "#define ACE_HALF_EQ(a, b) __heq(a, b)\n"
-    //             "#define ACE_HALF_NE(a, b) __hne(a, b)\n"
-    //             "#define ACE_HALF_LT(a, b) __hlt(a, b)\n"
-    //             "#define ACE_HALF_LE(a, b) __hle(a, b)\n"
-    //             "#define ACE_HALF_GT(a, b) __hgt(a, b)\n"
-    //             "#define ACE_HALF_GE(a, b) __hge(a, b)\n";
-    //     case ACE_DTYPE_BFLOAT16:
-    //         return
-    //             "/* BF16 辅助宏 */\n"
-    //             "#define ACE_BFLOAT16_ADD(a, b) __hadd(a, b)\n"
-    //             "#define ACE_BFLOAT16_MUL(a, b) __hmul(a, b)\n"
-    //             "#define ACE_BFLOAT16_SUB(a, b) __hsub(a, b)\n"
-    //             "#define ACE_BFLOAT16_DIV(a, b) __hdiv(a, b)\n"
-    //             "#define ACE_BFLOAT16_EQ(a, b) __heq(a, b)\n"
-    //             "#define ACE_BFLOAT16_NE(a, b) __hne(a, b)\n"
-    //             "#define ACE_BFLOAT16_LT(a, b) __hlt(a, b)\n"
-    //             "#define ACE_BFLOAT16_LE(a, b) __hle(a, b)\n"
-    //             "#define ACE_BFLOAT16_GT(a, b) __hgt(a, b)\n"
-    //             "#define ACE_BFLOAT16_GE(a, b) __hge(a, b)\n";
-    //     default:
-    //         return "";
-    // }
-    /* 不使用宏定义，避免 CUDA half 类型隐式转换歧义问题 */
-    /* 运算由 get_type_helpers 中的内联函数提供 */
+    /* 不使用宏，由 get_type_helpers 中的内联函数提供 */
     (void)dtype;
     return "";
+}
+
+/* 获取 kadd/kmul 宏定义 */
+const char* cuda_get_kernel_macros(ace_dtype_t dtype) {
+    static char macros_buf[256];
+    /* CUDA 原生支持所有类型的运算符，直接展开 */
+    snprintf(macros_buf, sizeof(macros_buf),
+        "#define kadd(a, b) ((a) + (b))\n"
+        "#define kmul(a, b) ((a) * (b))\n");
+    return macros_buf;
 }
 
 /* 类型辅助函数代码 */
@@ -141,6 +120,7 @@ char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) 
     const char* type_headers = cuda_get_type_headers(dtype);
     const char* type_macros = cuda_get_type_macros(dtype);
     const char* type_helpers = get_type_helpers(dtype);
+    const char* kernel_macros = cuda_get_kernel_macros(dtype);
 
     /* 替换 T 为实际类型 */
     char* code = strdup(src);
@@ -196,10 +176,11 @@ char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) 
     size_t body_len = body_end - body_start - 1;
 
     size_t total_len = strlen(name) + params_len + body_len + 1024 +
-                       strlen(type_headers) + strlen(type_macros) + strlen(type_helpers);
+                       strlen(type_headers) + strlen(type_macros) + strlen(type_helpers) + strlen(kernel_macros);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
+        "%s"
         "%s"
         "%s"
         "%s"
@@ -211,6 +192,7 @@ char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) 
         "    %.*s\n"
         "}\n",
         type_headers,
+        kernel_macros,
         type_helpers,
         type_macros,
         name, params,

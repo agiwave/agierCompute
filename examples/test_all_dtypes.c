@@ -14,21 +14,21 @@
 #include "ace.h"
 
 /* ============================================================================
- * 内核定义 - 统一使用泛型内核
- * 框架会自动处理不同数据类型的转换
+ * 内核定义 - 使用 kadd/kmul 等内核函数
+ * 框架会根据设备能力自动替换为原生或模拟实现
  * ============================================================================ */
 
 ACE_KERNEL(vec_add,
     void vec_add(int n, T* a, T* b, T* c) {
         int i = GID;
-        if (i < n) c[i] = a[i] + b[i];
+        if (i < n) c[i] = kadd(a[i], b[i]);
     }
 )
 
 ACE_KERNEL(vec_mul,
     void vec_mul(int n, T* a, T* b, T* c) {
         int i = GID;
-        if (i < n) c[i] = a[i] * b[i];
+        if (i < n) c[i] = kmul(a[i], b[i]);
     }
 )
 

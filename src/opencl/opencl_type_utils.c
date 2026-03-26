@@ -52,6 +52,16 @@ const char* ocl_get_extension(ace_dtype_t dtype) {
     }
 }
 
+/* 获取 kadd/kmul 宏定义 */
+const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
+    static char macros_buf[256];
+    /* OpenCL 原生支持所有类型的运算符，直接展开 */
+    snprintf(macros_buf, sizeof(macros_buf),
+        "#define kadd(a, b) ((a) + (b))\n"
+        "#define kmul(a, b) ((a) * (b))\n");
+    return macros_buf;
+}
+
 /* BF16 辅助函数代码 */
 static const char* get_bf16_helpers(void) {
     static char bf16_buf[1024];
@@ -84,6 +94,7 @@ static const char* get_bf16_helpers(void) {
 char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
     const char* type_name = ocl_get_type_name(dtype);
     const char* extension = ocl_get_extension(dtype);
+    const char* kernel_macros = ocl_get_kernel_macros(dtype);
 
     /* 替换 T 为实际类型 */
     char* code = strdup(src);
@@ -205,10 +216,11 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
     const char* bf16_helpers = (dtype == ACE_DTYPE_BFLOAT16) ? get_bf16_helpers() : "";
 
     size_t total_len = strlen(name) + params_len + body_len + 1024 +
-                       strlen(extension) + strlen(bf16_helpers);
+                       strlen(extension) + strlen(bf16_helpers) + strlen(kernel_macros);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
+        "%s"
         "%s"
         "%s"
         "__kernel void %s%s\n"
@@ -219,6 +231,7 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
         "    %.*s\n"
         "}\n",
         extension,
+        kernel_macros,
         bf16_helpers,
         name, params,
         (int)body_len, body_start + 1
