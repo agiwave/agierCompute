@@ -40,59 +40,85 @@ const char* cuda_get_type_headers(ace_dtype_t dtype) {
 
 /* 获取 CUDA 类型转换宏 */
 const char* cuda_get_type_macros(ace_dtype_t dtype) {
-    switch (dtype) {
-        case ACE_DTYPE_FLOAT16:
-            return
-                "/* FP16 辅助宏 */\n"
-                "#define ACE_HALF_ADD(a, b) __hadd(a, b)\n"
-                "#define ACE_HALF_MUL(a, b) __hmul(a, b)\n"
-                "#define ACE_HALF_SUB(a, b) __hsub(a, b)\n"
-                "#define ACE_HALF_DIV(a, b) __hdiv(a, b)\n"
-                "#define ACE_HALF_EQ(a, b) __heq(a, b)\n"
-                "#define ACE_HALF_NE(a, b) __hne(a, b)\n"
-                "#define ACE_HALF_LT(a, b) __hlt(a, b)\n"
-                "#define ACE_HALF_LE(a, b) __hle(a, b)\n"
-                "#define ACE_HALF_GT(a, b) __hgt(a, b)\n"
-                "#define ACE_HALF_GE(a, b) __hge(a, b)\n";
-        case ACE_DTYPE_BFLOAT16:
-            return
-                "/* BF16 辅助宏 */\n"
-                "#define ACE_BFLOAT16_ADD(a, b) __hadd(a, b)\n"
-                "#define ACE_BFLOAT16_MUL(a, b) __hmul(a, b)\n"
-                "#define ACE_BFLOAT16_SUB(a, b) __hsub(a, b)\n"
-                "#define ACE_BFLOAT16_DIV(a, b) __hdiv(a, b)\n"
-                "#define ACE_BFLOAT16_EQ(a, b) __heq(a, b)\n"
-                "#define ACE_BFLOAT16_NE(a, b) __hne(a, b)\n"
-                "#define ACE_BFLOAT16_LT(a, b) __hlt(a, b)\n"
-                "#define ACE_BFLOAT16_LE(a, b) __hle(a, b)\n"
-                "#define ACE_BFLOAT16_GT(a, b) __hgt(a, b)\n"
-                "#define ACE_BFLOAT16_GE(a, b) __hge(a, b)\n";
-        default:
-            return "";
-    }
+    // switch (dtype) {
+    //     case ACE_DTYPE_FLOAT16:
+    //         return
+    //             "/* FP16 辅助宏 */\n"
+    //             "#define ACE_HALF_ADD(a, b) __hadd(a, b)\n"
+    //             "#define ACE_HALF_MUL(a, b) __hmul(a, b)\n"
+    //             "#define ACE_HALF_SUB(a, b) __hsub(a, b)\n"
+    //             "#define ACE_HALF_DIV(a, b) __hdiv(a, b)\n"
+    //             "#define ACE_HALF_EQ(a, b) __heq(a, b)\n"
+    //             "#define ACE_HALF_NE(a, b) __hne(a, b)\n"
+    //             "#define ACE_HALF_LT(a, b) __hlt(a, b)\n"
+    //             "#define ACE_HALF_LE(a, b) __hle(a, b)\n"
+    //             "#define ACE_HALF_GT(a, b) __hgt(a, b)\n"
+    //             "#define ACE_HALF_GE(a, b) __hge(a, b)\n";
+    //     case ACE_DTYPE_BFLOAT16:
+    //         return
+    //             "/* BF16 辅助宏 */\n"
+    //             "#define ACE_BFLOAT16_ADD(a, b) __hadd(a, b)\n"
+    //             "#define ACE_BFLOAT16_MUL(a, b) __hmul(a, b)\n"
+    //             "#define ACE_BFLOAT16_SUB(a, b) __hsub(a, b)\n"
+    //             "#define ACE_BFLOAT16_DIV(a, b) __hdiv(a, b)\n"
+    //             "#define ACE_BFLOAT16_EQ(a, b) __heq(a, b)\n"
+    //             "#define ACE_BFLOAT16_NE(a, b) __hne(a, b)\n"
+    //             "#define ACE_BFLOAT16_LT(a, b) __hlt(a, b)\n"
+    //             "#define ACE_BFLOAT16_LE(a, b) __hle(a, b)\n"
+    //             "#define ACE_BFLOAT16_GT(a, b) __hgt(a, b)\n"
+    //             "#define ACE_BFLOAT16_GE(a, b) __hge(a, b)\n";
+    //     default:
+    //         return "";
+    // }
+    /* 不使用宏定义，避免 CUDA half 类型隐式转换歧义问题 */
+    /* 运算由 get_type_helpers 中的内联函数提供 */
+    (void)dtype;
+    return "";
 }
 
 /* 类型辅助函数代码 */
 static const char* get_type_helpers(ace_dtype_t dtype) {
-    static char helpers_buf[1024];
-    
+    static char helpers_buf[2048];
+
     if (dtype == ACE_DTYPE_FLOAT16) {
+        /* FP16: 使用 float 转换进行运算，避免 __hadd 等弃用函数 */
         snprintf(helpers_buf, sizeof(helpers_buf),
             "/* FP16 类型辅助函数 */\n"
             "typedef __half_raw half_raw;\n"
             "__device__ inline half f32_to_f16(float f) { return __float2half(f); }\n"
             "__device__ inline float f16_to_f32(half h) { return __half2float(h); }\n"
-            "__device__ inline half f16_add(half a, half b) { return __hadd(a, b); }\n"
-            "__device__ inline half f16_mul(half a, half b) { return __hmul(a, b); }\n");
+            "__device__ inline half f16_add(half a, half b) { "
+            "  return __float2half(__half2float(a) + __half2float(b)); "
+            "}\n"
+            "__device__ inline half f16_mul(half a, half b) { "
+            "  return __float2half(__half2float(a) * __half2float(b)); "
+            "}\n"
+            "__device__ inline half f16_sub(half a, half b) { "
+            "  return __float2half(__half2float(a) - __half2float(b)); "
+            "}\n"
+            "__device__ inline half f16_div(half a, half b) { "
+            "  return __float2half(__half2float(a) / __half2float(b)); "
+            "}\n");
         return helpers_buf;
     } else if (dtype == ACE_DTYPE_BFLOAT16) {
+        /* BF16: 使用 float 转换进行运算 */
         snprintf(helpers_buf, sizeof(helpers_buf),
             "/* BF16 类型辅助函数 */\n"
             "typedef __nv_bfloat16_raw bfloat16_raw;\n"
             "__device__ inline __nv_bfloat16 f32_to_bf16(float f) { return __float2bfloat16(f); }\n"
             "__device__ inline float bf16_to_f32(__nv_bfloat16 h) { return __bfloat162float(h); }\n"
-            "__device__ inline __nv_bfloat16 bf16_add(__nv_bfloat16 a, __nv_bfloat16 b) { return __hadd(a, b); }\n"
-            "__device__ inline __nv_bfloat16 bf16_mul(__nv_bfloat16 a, __nv_bfloat16 b) { return __hmul(a, b); }\n");
+            "__device__ inline __nv_bfloat16 bf16_add(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __float2bfloat16(__bfloat162float(a) + __bfloat162float(b)); "
+            "}\n"
+            "__device__ inline __nv_bfloat16 bf16_mul(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __float2bfloat16(__bfloat162float(a) * __bfloat162float(b)); "
+            "}\n"
+            "__device__ inline __nv_bfloat16 bf16_sub(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __float2bfloat16(__bfloat162float(a) - __bfloat162float(b)); "
+            "}\n"
+            "__device__ inline __nv_bfloat16 bf16_div(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __float2bfloat16(__bfloat162float(a) / __bfloat162float(b)); "
+            "}\n");
         return helpers_buf;
     }
     return "";
