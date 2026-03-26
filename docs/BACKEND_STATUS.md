@@ -17,7 +17,7 @@
 | **FLOAT32** | 4B | ✅ | ✅ | ✅ | 单精度浮点 - 完全支持 |
 | **FLOAT64** | 8B | ✅ | ✅ | ✅ | 双精度浮点 - 完全支持 |
 | **INT32** | 4B | ✅ | ✅ | ✅ | 32 位整数 - 完全支持 |
-| **INT64** | 8B | ✅ | ✅ | ⚠️ | 64 位整数 - Vulkan 回退到 32 位 |
+| **INT64** | 8B | ✅ | ✅ | ✅ | 64 位整数 - 完全支持 |
 | **FLOAT16** | 2B | ✅ | ✅ | ✅ | 半精度浮点 - AI 推理常用 |
 | **BFLOAT16** | 2B | ✅ | ✅ | ✅ | Brain 浮点 - AI 训练常用 |
 | **INT8** | 1B | ✅ | ✅ | ✅ | 8 位整数 - 量化常用 |
@@ -43,10 +43,10 @@
 - **INT8/UINT8**: 8 位整数，常用于量化神经网络
 - **INT16**: 16 位整数
 - **INT32**: 标准 32 位整数
-- **INT64**: 64 位整数
-  - CUDA/OpenCL: 原生支持 64 位整数
-  - Vulkan: 回退到 32 位 int（大多数设备不支持 64 位扩展）
-  - 注意：在 Vulkan 上使用 INT64 可能导致溢出，对于大整数请使用 INT32
+- **INT64**: 64 位整数 - 所有后端完全支持
+  - CUDA: 原生 `long long` 类型
+  - OpenCL: 原生 `long` 类型
+  - Vulkan: 使用 `int64_t` + `GL_EXT_shader_explicit_arithmetic_types_int64` 扩展
 
 ## 后端状态详情
 
@@ -78,7 +78,7 @@
 - **扩展要求**:
   - FLOAT16: `GL_EXT_shader_explicit_arithmetic_types_float16`
   - BFLOAT16/INT16: `GL_EXT_shader_explicit_arithmetic_types_int16`
-  - INT64: 大多数设备不支持 64 位扩展，回退到 32 位 int
+  - INT64: `GL_EXT_shader_explicit_arithmetic_types_int64`
 
 ### CPU ❌
 - **状态**: 占位实现
@@ -94,7 +94,7 @@
 
 ### 数据类型测试
 - FLOAT32/FLOAT64/INT32: ✅ 所有后端通过
-- INT64: ✅ CUDA/OpenCL 完全支持，Vulkan 回退到 32 位
+- INT64: ✅ 所有后端完全支持
 - INT8/UINT8/INT16: ✅ 所有后端通过
 - FLOAT16/BFLOAT16: ✅ 已实现支持（需要设备扩展）
 

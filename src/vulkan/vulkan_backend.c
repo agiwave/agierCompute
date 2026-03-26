@@ -79,9 +79,7 @@ static const char* get_glsl_type_name(ace_dtype_t dtype) {
         case ACE_DTYPE_FLOAT32:  return "float";
         case ACE_DTYPE_FLOAT64:  return "double";
         case ACE_DTYPE_INT32:    return "int";
-        /* INT64: 大多数 Vulkan 设备不支持 64 位整数，回退到 int
-         * 注意：这会导致溢出，对于大整数请使用 INT32 */
-        case ACE_DTYPE_INT64:    return "int";  
+        case ACE_DTYPE_INT64:    return "int64_t";  /* Vulkan 支持 64 位整数 */
         case ACE_DTYPE_INT8:     return "int8_t";
         case ACE_DTYPE_UINT8:    return "uint8_t";
         case ACE_DTYPE_INT16:    return "int16_t";
@@ -102,9 +100,9 @@ static const char* get_glsl_extension(ace_dtype_t dtype) {
         case ACE_DTYPE_FLOAT64:
             return "#extension GL_ARB_gpu_shader_fp64 : require\n";
         case ACE_DTYPE_INT64:
-            /* INT64 需要 64 位整数扩展，但许多设备不支持
-             * 回退到使用 int（32 位），对于大整数建议使用 INT32 */
-            return "";
+            /* INT64: 使用 GL_EXT_shader_explicit_arithmetic_types_int64 扩展
+             * 这是 Vulkan 支持 64 位整数的标准扩展 */
+            return "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
         case ACE_DTYPE_FLOAT16:
             return "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
         case ACE_DTYPE_BFLOAT16:
