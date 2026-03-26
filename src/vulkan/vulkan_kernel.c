@@ -271,36 +271,59 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         n_scalars = k->n_scalars;
     }
 
-    /* 准备 Descriptor Sets */
-    VkDescriptorBufferInfo desc_info[8];
+    /* 获取数据类型 */
+    ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
+
+    /* 使用静态数组避免 malloc 开销 */
     VkWriteDescriptorSet writes[8];
-    int write_count = 0;
+    VkDescriptorBufferInfo buf_infos[8];
+    union { int i; float f; } push_values[8];  /* push constants 值 - 支持 int 和 float */
 
-    for (int i = 0; i < n && i < n_buffers; i++) {
-        if (sizes[i] <= 0) {
-            vk_buffer_t* buf = (vk_buffer_t*)args[i];
-            if (!buf || !buf->buffer) {
-                printf("[Vulkan] Invalid buffer at arg %d\n", i);
-                continue;
+    /* 更新 descriptor sets */
+    int buf_idx = 0;
+    if (n_buffers > 0 && k->desc_set != VK_NULL_HANDLE) {
+        memset(writes, 0, sizeof(writes));
+
+        for (int i = 0; i < n && buf_idx < n_buffers && buf_idx < 8; i++) {
+            if (sizes[i] <= 0) {
+                vk_buffer_t* buf = (vk_buffer_t*)args[i];
+                buf_infos[buf_idx].buffer = buf->buffer;
+                buf_infos[buf_idx].offset = 0;
+                buf_infos[buf_idx].range = VK_WHOLE_SIZE;
+
+                writes[buf_idx].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[buf_idx].dstSet = k->desc_set;
+                writes[buf_idx].dstBinding = buf_idx;
+                writes[buf_idx].descriptorCount = 1;
+                writes[buf_idx].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[buf_idx].pBufferInfo = &buf_infos[buf_idx];
+                buf_idx++;
             }
-            desc_info[write_count].buffer = buf->buffer;
-            desc_info[write_count].offset = 0;
-            desc_info[write_count].range = VK_WHOLE_SIZE;  /* 使用 VK_WHOLE_SIZE */
+        }
+        vkUpdateDescriptorSets(d->dev->device, buf_idx, writes, 0, NULL);
+    }
 
-            writes[write_count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[write_count].dstSet = k->desc_set;
-            writes[write_count].dstBinding = write_count;
-            writes[write_count].dstArrayElement = 0;
-            writes[write_count].descriptorCount = 1;
-            writes[write_count].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[write_count].pBufferInfo = &desc_info[write_count];
-            write_count++;
+    /* Push constants - 第一个参数 n 总是 int，后续参数根据内核类型 */
+    int push_count = 0;
+    for (int i = 0; i < n && push_count < n_scalars && push_count < 8; i++) {
+        if (sizes[i] > 0) {
+            /* 第一个标量参数 (n) 总是 int，后续根据内核类型 */
+            if (push_count == 0) {
+                push_values[push_count].i = *(int*)args[i];
+            } else if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64) {
+                /* float16 在 host 侧使用 float 传递，在 shader 中转换 */
+                push_values[push_count].f = *(float*)args[i];
+            } else if (dtype == ACE_DTYPE_BFLOAT16) {
+                /* bfloat16 在 host 侧使用 uint16 传递 */
+                push_values[push_count].i = *(uint16_t*)args[i];
+            } else {
+                push_values[push_count].i = *(int*)args[i];
+            }
+            push_count++;
         }
     }
 
-    vkUpdateDescriptorSets(d->dev->device, write_count, writes, 0, NULL);
-
-    /* 获取命令缓冲 */
+    /* 使用环形命令缓冲池 */
     int cmd_idx = d->cmd_buffer_index;
     VkCommandBuffer cmd = d->cmd_buffers[cmd_idx];
     VkFence fence = d->fences[cmd_idx];
@@ -309,6 +332,9 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     vkWaitForFences(d->dev->device, 1, &fence, VK_TRUE, UINT64_MAX);
     vkResetFences(d->dev->device, 1, &fence);
 
+    /* 重置命令缓冲 */
+    vkResetCommandBuffer(cmd, 0);
+
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
@@ -316,30 +342,44 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     vkBeginCommandBuffer(cmd, &begin_info);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k->pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k->layout, 0, 1, &k->desc_set, 0, NULL);
 
-    if (n_scalars > 0) {
-        vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, n_scalars * sizeof(int), args);
+    if (n_buffers > 0 && k->desc_set != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k->layout,
+            0, 1, &k->desc_set, 0, NULL);
     }
 
-    /* 使用原始代码的 dispatch 计算方式 */
+    if (push_count > 0) {
+        /* 计算 push constants 大小：第一个参数是 int，后续根据类型 */
+        size_t push_size = 0;
+        for (int i = 0; i < push_count; i++) {
+            if (i == 0) {
+                push_size += sizeof(int);  /* 第一个参数 n 总是 int */
+            } else if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64) {
+                push_size += sizeof(float);  /* float 类型 */
+            } else if (dtype == ACE_DTYPE_BFLOAT16 || dtype == ACE_DTYPE_INT16) {
+                push_size += sizeof(uint16_t);  /* 16 位类型 */
+            } else {
+                push_size += sizeof(int);  /* int 类型 */
+            }
+        }
+        /* 确保 push constants 大小是 4 的倍数（Vulkan 要求） */
+        push_size = (push_size + 3) & ~3;
+        vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, push_size, &push_values[0]);
+    }
+
     uint32_t groups = (uint32_t)((cfg->grid[0] * cfg->block[0] + 255) / 256);
     vkCmdDispatch(cmd, groups, 1, 1);
+
     vkEndCommandBuffer(cmd);
 
-    VkSubmitInfo submit_info = {
+    VkSubmitInfo submit = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .commandBufferCount = 1,
         .pCommandBuffers = &cmd
     };
 
-    VkResult result = vkQueueSubmit(d->dev->queue, 1, &submit_info, fence);
-    if (result != VK_SUCCESS) {
-        return ACE_ERROR_LAUNCH;
-    }
-
-    /* 等待完成 */
-    vkWaitForFences(d->dev->device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkQueueSubmit(d->dev->queue, 1, &submit, fence);
 
     /* 更新命令缓冲索引 */
     d->cmd_buffer_index = (cmd_idx + 1) % MAX_CMD_BUFFERS;

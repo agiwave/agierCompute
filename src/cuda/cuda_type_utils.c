@@ -98,6 +98,18 @@ static const char* get_type_helpers(ace_dtype_t dtype) {
             "}\n"
             "__device__ inline half f16_div(half a, half b) { "
             "  return __float2half(__half2float(a) / __half2float(b)); "
+            "}\n"
+            "__device__ inline bool f16_lt(half a, half b) { "
+            "  return __half2float(a) < __half2float(b); "
+            "}\n"
+            "__device__ inline bool f16_le(half a, half b) { "
+            "  return __half2float(a) <= __half2float(b); "
+            "}\n"
+            "__device__ inline bool f16_gt(half a, half b) { "
+            "  return __half2float(a) > __half2float(b); "
+            "}\n"
+            "__device__ inline bool f16_ge(half a, half b) { "
+            "  return __half2float(a) >= __half2float(b); "
             "}\n");
         return helpers_buf;
     } else if (dtype == ACE_DTYPE_BFLOAT16) {

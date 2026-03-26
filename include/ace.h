@@ -313,11 +313,6 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
     } \
 } while(0)
 
-
-#define LID        /* 局部线程ID */
-#define BSIZE      /* 工作组大小 */
-#define BARRIER()  /* 局部同步 */
-
 /* ============================================================================
  * 核心 API
  * ============================================================================ */

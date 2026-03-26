@@ -305,9 +305,9 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     snprintf(out, len,
         "#version 450\n"
         "%s"
-        "%s"
-        "%s"
         "layout(local_size_x = 256) in;\n"
+        "%s"
+        "%s"
         "%s"
         "%s"
         "#define GID int(gl_GlobalInvocationID.x)\n"
