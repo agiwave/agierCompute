@@ -390,56 +390,7 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
                                ace_dtype_t dtype, size_t n,
                                void** args, int* types, int nargs) {
     if (!dev || !kernel) return ACE_ERROR_INVALID;
-    if (!dev->backend || !dev->backend->ops.kernel_compile || !dev->backend->ops.kernel_launch) {
-        return ACE_ERROR_BACKEND;
-    }
-
-    kernel_template_t* tmpl = get_template(kernel);
-    if (!tmpl) return ACE_ERROR_COMPILE;
-
-    /* 处理参数，找到第一个 buffer 所属的设备 */
-    void* processed_args[16];
-    size_t sizes[16];
-    ace_device_t actual_dev = dev;  /* 默认使用传入设备 */
-    
-    if (nargs > 16) nargs = 16;
-    for (int i = 0; i < nargs; i++) {
-        if (types[i] == ACE_BUF) {
-            struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
-            processed_args[i] = buf ? buf->ptr : NULL;
-            sizes[i] = ACE_ARG_BUFFER;
-            /* 使用第一个有效 buffer 的设备 */
-            if (buf && buf->dev && actual_dev == dev) {
-                actual_dev = buf->dev;
-            }
-        } else {
-            processed_args[i] = args[i];
-            sizes[i] = ACE_ARG_VALUE;
-        }
-    }
-
-    /* 使用 actual_dev 编译和执行 */
-    void* compiled_kernel = NULL;
-    char* err_msg = NULL;
-    
-    ace_error_t err = actual_dev->backend->ops.kernel_compile(
-        actual_dev->handle, tmpl->name, tmpl->src, &compiled_kernel, &err_msg);
-    
-    if (err != ACE_OK) {
-        if (err_msg) { fprintf(stderr, "[ACE] Compile error: %s\n", err_msg); free(err_msg); }
-        return err;
-    }
-
-    /* 后端负责执行 */
-    ace_launch_config_t cfg = ace_launch_1d(n, 256);
-    return actual_dev->backend->ops.kernel_launch(compiled_kernel, &cfg, processed_args, sizes, nargs);
-}
-
-ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
-                               ace_dtype_t dtype, ace_launch_config_t* config,
-                               void** args, int* types, int nargs) {
-    if (!dev || !kernel) return ACE_ERROR_INVALID;
-    if (!dev->backend || !dev->backend->ops.kernel_compile || !dev->backend->ops.kernel_launch) {
+    if (!dev->backend || !dev->backend->ops.kernel_launch) {
         return ACE_ERROR_BACKEND;
     }
 
@@ -450,7 +401,7 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
     void* processed_args[16];
     size_t sizes[16];
     ace_device_t actual_dev = dev;
-    
+
     if (nargs > 16) nargs = 16;
     for (int i = 0; i < nargs; i++) {
         if (types[i] == ACE_BUF) {
@@ -466,21 +417,59 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
         }
     }
 
-    /* 使用 actual_dev 编译和执行 */
-    void* compiled_kernel = NULL;
-    char* err_msg = NULL;
-    
-    ace_error_t err = actual_dev->backend->ops.kernel_compile(
-        actual_dev->handle, tmpl->name, tmpl->src, &compiled_kernel, &err_msg);
-    
-    if (err != ACE_OK) {
-        if (err_msg) { fprintf(stderr, "[ACE] Compile error: %s\n", err_msg); free(err_msg); }
-        return err;
+    /* 构建内核定义，传递给后端 */
+    ace_kernel_def_t kernel_def;
+    kernel_def.id = (int)(intptr_t)kernel;
+    kernel_def.name = tmpl->name;
+    kernel_def.src = tmpl->src;
+    kernel_def.dtype = (int)dtype;
+
+    /* 后端负责编译（如果需要）和执行 */
+    ace_launch_config_t cfg = ace_launch_1d(n, 256);
+    return actual_dev->backend->ops.kernel_launch(actual_dev->handle, &kernel_def, &cfg, processed_args, sizes, nargs);
+}
+
+ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
+                               ace_dtype_t dtype, ace_launch_config_t* config,
+                               void** args, int* types, int nargs) {
+    if (!dev || !kernel) return ACE_ERROR_INVALID;
+    if (!dev->backend || !dev->backend->ops.kernel_launch) {
+        return ACE_ERROR_BACKEND;
     }
 
-    /* 后端负责执行 */
+    kernel_template_t* tmpl = get_template(kernel);
+    if (!tmpl) return ACE_ERROR_COMPILE;
+
+    /* 处理参数 */
+    void* processed_args[16];
+    size_t sizes[16];
+    ace_device_t actual_dev = dev;
+
+    if (nargs > 16) nargs = 16;
+    for (int i = 0; i < nargs; i++) {
+        if (types[i] == ACE_BUF) {
+            struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
+            processed_args[i] = buf ? buf->ptr : NULL;
+            sizes[i] = ACE_ARG_BUFFER;
+            if (buf && buf->dev && actual_dev == dev) {
+                actual_dev = buf->dev;
+            }
+        } else {
+            processed_args[i] = args[i];
+            sizes[i] = ACE_ARG_VALUE;
+        }
+    }
+
+    /* 构建内核定义，传递给后端 */
+    ace_kernel_def_t kernel_def;
+    kernel_def.id = (int)(intptr_t)kernel;
+    kernel_def.name = tmpl->name;
+    kernel_def.src = tmpl->src;
+    kernel_def.dtype = (int)dtype;
+
+    /* 后端负责编译（如果需要）和执行 */
     ace_launch_config_t default_cfg = ace_launch_1d(1, 1);
-    return actual_dev->backend->ops.kernel_launch(compiled_kernel,
+    return actual_dev->backend->ops.kernel_launch(actual_dev->handle, &kernel_def,
                                             config ? config : &default_cfg,
                                             processed_args, sizes, nargs);
 }

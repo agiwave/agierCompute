@@ -368,29 +368,71 @@ static void ocl_kernel_release(void* kernel) {
     }
 }
 
-static ace_error_t ocl_kernel_launch(void* kernel, ace_launch_config_t* cfg,
-                                      void** args, size_t* sizes, int n) {
-    ocl_kernel_t* k = (ocl_kernel_t*)kernel;
-    if (!k || !k->kernel) return ACE_ERROR_LAUNCH;
-    if (!k->device || !k->device->queue) return ACE_ERROR_LAUNCH;
+static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
+                                      ace_launch_config_t* cfg, void** args, size_t* sizes, int n) {
+    ocl_device_t* d = (ocl_device_t*)dev;
+    if (!d || !d->queue) return ACE_ERROR_LAUNCH;
 
-    cl_int err = CL_SUCCESS;
+    /* 查找缓存的内核（简化：每次重新编译，实际应该缓存） */
+    const char* type_name = "float";
+    const char* suffix = strrchr(kernel_def->name, '_');
+    if (suffix) {
+        suffix++;
+        if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
+        else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
+    }
+
+    char* translated = translate_to_opencl(kernel_def->name, kernel_def->src, type_name);
+
+    cl_int err;
+    const char* srcs[1] = { translated };
+    size_t lens[1] = { strlen(translated) };
+
+    cl_program prog = clCreateProgramWithSource(d->context, 1, srcs, lens, &err);
+    if (err != CL_SUCCESS) {
+        free(translated);
+        return ACE_ERROR_COMPILE;
+    }
+
+    err = clBuildProgram(prog, 1, &d->device, NULL, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        clReleaseProgram(prog);
+        free(translated);
+        return ACE_ERROR_COMPILE;
+    }
+
+    cl_kernel krn = clCreateKernel(prog, kernel_def->name, &err);
+    clReleaseProgram(prog);
+    free(translated);
+    
+    if (err != CL_SUCCESS) {
+        return ACE_ERROR_COMPILE;
+    }
+
+    /* 设置参数 */
     for (int i = 0; i < n; i++) {
         if (sizes[i] == ACE_ARG_BUFFER) {
             ocl_buffer_t* buf = (ocl_buffer_t*)args[i];
-            if (!buf || !buf->mem) return ACE_ERROR_LAUNCH;
-            err = clSetKernelArg(k->kernel, i, sizeof(cl_mem), &buf->mem);
+            if (!buf || !buf->mem) {
+                clReleaseKernel(krn);
+                return ACE_ERROR_LAUNCH;
+            }
+            err = clSetKernelArg(krn, i, sizeof(cl_mem), &buf->mem);
         } else {
-            /* Assume 4 bytes for scalar */
-            err = clSetKernelArg(k->kernel, i, sizeof(int), args[i]);
+            err = clSetKernelArg(krn, i, sizeof(int), args[i]);
         }
-        if (err != CL_SUCCESS) return ACE_ERROR_LAUNCH;
+        if (err != CL_SUCCESS) {
+            clReleaseKernel(krn);
+            return ACE_ERROR_LAUNCH;
+        }
     }
 
     size_t global[3] = { cfg->grid[0] * cfg->block[0], cfg->grid[1] * cfg->block[1], cfg->grid[2] * cfg->block[2] };
     size_t local[3] = { cfg->block[0], cfg->block[1], cfg->block[2] };
 
-    err = clEnqueueNDRangeKernel(k->device->queue, k->kernel, 3, NULL, global, local, 0, NULL, NULL);
+    err = clEnqueueNDRangeKernel(d->queue, krn, 3, NULL, global, local, 0, NULL, NULL);
+    clReleaseKernel(krn);
+    
     return (err == CL_SUCCESS) ? ACE_OK : ACE_ERROR_LAUNCH;
 }
 
@@ -407,8 +449,6 @@ static ace_backend_ops_t ocl_ops = {
     .mem_write = ocl_mem_write,
     .mem_read = ocl_mem_read,
     .finish = ocl_finish,
-    .kernel_compile = ocl_kernel_compile,
-    .kernel_release = ocl_kernel_release,
     .kernel_launch = ocl_kernel_launch,
 };
 

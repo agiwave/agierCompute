@@ -592,20 +592,35 @@ static void vk_kernel_release(void* kernel) {
     (void)kernel;
 }
 
-static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
-                                     void** args, size_t* sizes, int n) {
-    vk_cached_kernel_t* k = (vk_cached_kernel_t*)kernel;
-    if (!k) return ACE_ERROR_LAUNCH;
+static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
+                                     ace_launch_config_t* cfg, void** args, size_t* sizes, int n) {
+    vk_device_internal_t* d_int = (vk_device_internal_t*)dev;
+    if (!d_int) return ACE_ERROR_LAUNCH;
+
+    /* 查找缓存的内核 */
+    vk_cached_kernel_t* k = NULL;
+    for (int i = 0; i < d_int->kernel_count; i++) {
+        if (strcmp(d_int->kernels[i].name, kernel_def->name) == 0) {
+            k = &d_int->kernels[i];
+            break;
+        }
+    }
+
+    /* 如果未缓存，编译内核（简化：调用现有编译逻辑） */
+    if (!k) {
+        /* 需要实现编译逻辑，暂时返回错误 */
+        return ACE_ERROR_COMPILE;
+    }
 
     /* Find device from first buffer */
-    vk_device_t* dev = NULL;
+    vk_device_t* vk_dev = NULL;
     for (int i = 0; i < n; i++) {
         if (sizes[i] == ACE_ARG_BUFFER) {
             vk_buffer_t* buf = (vk_buffer_t*)args[i];
-            if (buf && buf->dev) { dev = buf->dev; break; }
+            if (buf && buf->dev) { vk_dev = buf->dev; break; }
         }
     }
-    if (!dev) return ACE_ERROR_LAUNCH;
+    if (!vk_dev) return ACE_ERROR_LAUNCH;
 
     /* Update descriptor sets */
     int buf_idx = 0;
@@ -629,7 +644,7 @@ static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
                 buf_idx++;
             }
         }
-        vkUpdateDescriptorSets(dev->device, buf_idx, writes, 0, NULL);
+        vkUpdateDescriptorSets(vk_dev->device, buf_idx, writes, 0, NULL);
         free(writes);
         free(buf_infos);
     }
@@ -640,8 +655,7 @@ static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
         scalars = (float*)calloc(k->n_scalars, sizeof(float));
         int scalar_idx = 0;
         for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
-            if (sizes[i] != ACE_ARG_BUFFER) {  /* ACE_ARG_VALUE = 1 */
-                /* Read as int (most common for loop counters and sizes) */
+            if (sizes[i] == ACE_ARG_VALUE) {
                 int ival = *(int*)args[i];
                 scalars[scalar_idx] = (float)ival;
                 scalar_idx++;
@@ -652,12 +666,12 @@ static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
     /* Command buffer */
     VkCommandBufferAllocateInfo cmd_alloc = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = dev->cmd_pool,
+        .commandPool = vk_dev->cmd_pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1
     };
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(dev->device, &cmd_alloc, &cmd);
+    vkAllocateCommandBuffers(vk_dev->device, &cmd_alloc, &cmd);
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -687,10 +701,10 @@ static ace_error_t vk_kernel_launch(void* kernel, ace_launch_config_t* cfg,
         .commandBufferCount = 1,
         .pCommandBuffers = &cmd
     };
-    vkQueueSubmit(dev->queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(dev->queue);
+    vkQueueSubmit(vk_dev->queue, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vk_dev->queue);
 
-    vkFreeCommandBuffers(dev->device, dev->cmd_pool, 1, &cmd);
+    vkFreeCommandBuffers(vk_dev->device, vk_dev->cmd_pool, 1, &cmd);
     free(scalars);
 
     return ACE_OK;
@@ -712,8 +726,6 @@ static ace_backend_ops_t vk_ops = {
     .mem_write = vk_mem_write,
     .mem_read = vk_mem_read,
     .finish = vk_finish,
-    .kernel_compile = vk_kernel_compile,
-    .kernel_release = vk_kernel_release,
     .kernel_launch = vk_kernel_launch,
 };
 

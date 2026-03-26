@@ -69,29 +69,38 @@ typedef struct {
 } ace_backend_info_t;
 
 /* ============================================================================
+ * 内核定义结构
+ * ============================================================================ */
+
+typedef struct {
+    int id;              /* 内核 ID（唯一标识） */
+    const char* name;    /* 内核名称 */
+    const char* src;     /* 内核源代码 */
+    int dtype;           /* 数据类型 */
+} ace_kernel_def_t;
+
+/* ============================================================================
  * 后端操作函数表
  * ============================================================================ */
 
 typedef struct {
     ace_error_t (*init)(ace_backend_info_t* info);
     void (*shutdown)(ace_backend_info_t* info);
-    
+
     ace_error_t (*device_count)(int* count);
     ace_error_t (*device_get)(int idx, void** dev);
     void (*device_release)(void* dev);
     ace_error_t (*device_props)(void* dev, void* props);
-    
+
     ace_error_t (*mem_alloc)(void* dev, size_t size, void** ptr);
     void (*mem_free)(void* dev, void* ptr);
     ace_error_t (*mem_write)(void* dev, void* dst, const void* src, size_t size);
     ace_error_t (*mem_read)(void* dev, void* dst, const void* src, size_t size);
     ace_error_t (*finish)(void* dev);  /* 同步等待 */
     
-    ace_error_t (*kernel_compile)(void* dev, const char* name, const char* src, 
-                                   void** kernel, char** err_msg);
-    void (*kernel_release)(void* kernel);
-    ace_error_t (*kernel_launch)(void* kernel, ace_launch_config_t* cfg,
-                                  void** args, size_t* sizes, int n);
+    /* 内核执行：后端负责编译和缓存 */
+    ace_error_t (*kernel_launch)(void* dev, ace_kernel_def_t* kernel_def,
+                                  ace_launch_config_t* cfg, void** args, size_t* sizes, int n);
 } ace_backend_ops_t;
 
 /* ============================================================================

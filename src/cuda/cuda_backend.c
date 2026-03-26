@@ -29,20 +29,28 @@ typedef struct {
     int max_threads;
     int compute_major;
     int compute_minor;
+    cuda_kernel_cache_t kernel_cache;  /* 内核缓存 */
 } cuda_device_t;
 
 typedef struct {
-    void* ptr;
+    CUdeviceptr ptr;
     size_t size;
-    cuda_device_t* dev;
 } cuda_buffer_t;
 
-typedef struct {
+typedef struct cuda_kernel_s {
+    int id;                /* 内核 ID */
     CUmodule module;
     CUfunction func;
     char* name;
     cuda_device_t* dev;
+    struct cuda_kernel_s* next;  /* 用于哈希表链式处理 */
 } cuda_kernel_t;
+
+/* 内核缓存：每个设备一个哈希表 */
+#define KERNEL_CACHE_SIZE 256
+typedef struct {
+    cuda_kernel_t* buckets[KERNEL_CACHE_SIZE];
+} cuda_kernel_cache_t;
 
 /* ============================================================================
  * ACE -> CUDA translation
@@ -176,7 +184,10 @@ static ace_error_t cuda_device_get(int idx, void** dev) {
         free(d);
         return ACE_ERROR_DEVICE;
     }
-    
+
+    /* 初始化内核缓存 */
+    memset(&d->kernel_cache, 0, sizeof(d->kernel_cache));
+
     *dev = d;
     return ACE_OK;
 }
@@ -184,6 +195,17 @@ static ace_error_t cuda_device_get(int idx, void** dev) {
 static void cuda_device_release(void* dev) {
     cuda_device_t* d = (cuda_device_t*)dev;
     if (d) {
+        /* 释放内核缓存 */
+        for (int i = 0; i < KERNEL_CACHE_SIZE; i++) {
+            cuda_kernel_t* k = d->kernel_cache.buckets[i];
+            while (k) {
+                cuda_kernel_t* next = k->next;
+                if (k->module) cuModuleUnload(k->module);
+                free(k->name);
+                free(k);
+                k = next;
+            }
+        }
         if (d->context) cuCtxDestroy(d->context);
         free(d);
     }
@@ -206,41 +228,43 @@ static ace_error_t cuda_device_props(void* dev, void* props) {
 static ace_error_t cuda_mem_alloc(void* dev, size_t size, void** ptr) {
     cuda_device_t* d = (cuda_device_t*)dev;
     if (!d) return ACE_ERROR_DEVICE;
-    
+
     cuCtxSetCurrent(d->context);
-    
+
     cuda_buffer_t* buf = (cuda_buffer_t*)calloc(1, sizeof(*buf));
     if (!buf) return ACE_ERROR_MEM;
-    
+
     if (cuMemAlloc(&buf->ptr, size) != CUDA_SUCCESS) {
         free(buf);
         return ACE_ERROR_MEM;
     }
-    
+
     buf->size = size;
-    buf->dev = d;
     *ptr = buf;
     return ACE_OK;
 }
 
 static void cuda_mem_free(void* dev, void* ptr) {
+    (void)dev;
     cuda_buffer_t* buf = (cuda_buffer_t*)ptr;
     if (buf) {
-        if (buf->ptr) cuMemFree((CUdeviceptr)buf->ptr);
+        if (buf->ptr) cuMemFree(buf->ptr);
         free(buf);
     }
 }
 
 static ace_error_t cuda_mem_write(void* dev, void* dst, const void* src, size_t size) {
+    (void)dev;
     cuda_buffer_t* buf = (cuda_buffer_t*)dst;
     if (!buf || !buf->ptr) return ACE_ERROR_DEVICE;
-    return (cuMemcpyHtoD((CUdeviceptr)buf->ptr, src, size) == CUDA_SUCCESS) ? ACE_OK : ACE_ERROR_IO;
+    return (cuMemcpyHtoD(buf->ptr, src, size) == CUDA_SUCCESS) ? ACE_OK : ACE_ERROR_IO;
 }
 
 static ace_error_t cuda_mem_read(void* dev, void* dst, const void* src, size_t size) {
+    (void)dev;
     cuda_buffer_t* buf = (cuda_buffer_t*)src;
     if (!buf || !buf->ptr) return ACE_ERROR_DEVICE;
-    return (cuMemcpyDtoH(dst, (CUdeviceptr)buf->ptr, size) == CUDA_SUCCESS) ? ACE_OK : ACE_ERROR_IO;
+    return (cuMemcpyDtoH(dst, buf->ptr, size) == CUDA_SUCCESS) ? ACE_OK : ACE_ERROR_IO;
 }
 
 static ace_error_t cuda_finish(void* dev) {
@@ -251,136 +275,135 @@ static ace_error_t cuda_finish(void* dev) {
 }
 
 #ifdef NVRTC_AVAILABLE
+/* NVRTC available - kernel compilation is handled in cuda_kernel_launch */
+#endif /* NVRTC_AVAILABLE */
 
-static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* src,
-                                        void** kernel, char** err_msg) {
+static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
+                                       ace_launch_config_t* cfg, void** args, size_t* sizes, int n) {
     cuda_device_t* d = (cuda_device_t*)dev;
     if (!d) return ACE_ERROR_DEVICE;
 
-    /* 确定数据类型 */
-    const char* type_name = "float";
-    const char* suffix = strrchr(name, '_');
-    if (suffix) {
-        suffix++;
-        if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
-        else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
-        else if (strcmp(suffix, "long") == 0 || strcmp(suffix, "int64") == 0) type_name = "long";
-        else if (strcmp(suffix, "half") == 0 || strcmp(suffix, "float16") == 0) type_name = "half";
-        else if (strcmp(suffix, "bfloat16") == 0) type_name = "nv_bfloat16";
-        else if (strcmp(suffix, "char") == 0 || strcmp(suffix, "int8") == 0) type_name = "char";
-        else if (strcmp(suffix, "uchar") == 0 || strcmp(suffix, "uint8") == 0) type_name = "unsigned char";
-        else if (strcmp(suffix, "short") == 0 || strcmp(suffix, "int16") == 0) type_name = "short";
+    cuCtxSetCurrent(d->context);
+
+    /* 查找缓存的内核 */
+    int bucket = kernel_def->id % KERNEL_CACHE_SIZE;
+    cuda_kernel_t* cached = d->kernel_cache.buckets[bucket];
+    while (cached) {
+        if (cached->id == kernel_def->id) {
+            break;  /* 找到缓存 */
+        }
+        cached = cached->next;
     }
 
-    char* cuda_src = translate_to_cuda(name, src, type_name);
-    
-    nvrtcProgram prog;
-    nvrtcResult res = nvrtcCreateProgram(&prog, cuda_src, name, 0, NULL, NULL);
-    if (res != NVRTC_SUCCESS) {
-        free(cuda_src);
-        if (err_msg) *err_msg = strdup("Failed to create NVRTC program");
-        return ACE_ERROR_COMPILE;
-    }
-    
-    char arch_opt[64];
-    snprintf(arch_opt, sizeof(arch_opt), "-arch=compute_%d%d", d->compute_major, d->compute_minor);
-    const char* opts[] = { arch_opt, "-default-device" };
-    
-    res = nvrtcCompileProgram(prog, 2, opts);
-    if (res != NVRTC_SUCCESS) {
-        size_t log_size;
-        nvrtcGetProgramLogSize(prog, &log_size);
-        if (err_msg) {
-            *err_msg = (char*)malloc(log_size + 1);
-            nvrtcGetProgramLog(prog, *err_msg);
+    /* 如果未缓存，编译内核 */
+    if (!cached) {
+        /* 确定数据类型 */
+        const char* type_name = "float";
+        const char* suffix = strrchr(kernel_def->name, '_');
+        if (suffix) {
+            suffix++;
+            if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
+            else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
+            else if (strcmp(suffix, "long") == 0 || strcmp(suffix, "int64") == 0) type_name = "long";
         }
+
+        char* cuda_src = translate_to_cuda(kernel_def->name, kernel_def->src, type_name);
+
+#ifdef NVRTC_AVAILABLE
+        nvrtcProgram prog;
+        nvrtcResult res = nvrtcCreateProgram(&prog, cuda_src, kernel_def->name, 0, NULL, NULL);
+        if (res != NVRTC_SUCCESS) {
+            free(cuda_src);
+            return ACE_ERROR_COMPILE;
+        }
+
+        char arch_opt[64];
+        snprintf(arch_opt, sizeof(arch_opt), "-arch=compute_%d%d", d->compute_major, d->compute_minor);
+        const char* opts[] = { arch_opt, "-default-device" };
+
+        res = nvrtcCompileProgram(prog, 2, opts);
+        if (res != NVRTC_SUCCESS) {
+            nvrtcDestroyProgram(&prog);
+            free(cuda_src);
+            return ACE_ERROR_COMPILE;
+        }
+
+        size_t ptx_size;
+        nvrtcGetPTXSize(prog, &ptx_size);
+        char* ptx = (char*)malloc(ptx_size);
+        nvrtcGetPTX(prog, ptx);
         nvrtcDestroyProgram(&prog);
         free(cuda_src);
-        return ACE_ERROR_COMPILE;
-    }
-    
-    size_t ptx_size;
-    nvrtcGetPTXSize(prog, &ptx_size);
-    char* ptx = (char*)malloc(ptx_size);
-    nvrtcGetPTX(prog, ptx);
-    
-    nvrtcDestroyProgram(&prog);
-    free(cuda_src);
-    
-    cuCtxSetCurrent(d->context);
-    
-    cuda_kernel_t* k = (cuda_kernel_t*)calloc(1, sizeof(*k));
-    if (!k) {
+
+        cuda_kernel_t* k = (cuda_kernel_t*)calloc(1, sizeof(*k));
+        if (!k) {
+            free(ptx);
+            return ACE_ERROR_MEM;
+        }
+
+        k->id = kernel_def->id;
+        k->name = strdup(kernel_def->name);
+        k->dev = d;
+
+        if (cuModuleLoadData(&k->module, ptx) != CUDA_SUCCESS) {
+            free(ptx);
+            free(k->name);
+            free(k);
+            return ACE_ERROR_COMPILE;
+        }
         free(ptx);
-        return ACE_ERROR_MEM;
-    }
-    
-    k->name = strdup(name);
-    k->dev = d;
-    
-    CUresult err = cuModuleLoadData(&k->module, ptx);
-    free(ptx);
-    
-    if (err != CUDA_SUCCESS) {
-        free(k->name);
-        free(k);
-        if (err_msg) *err_msg = strdup("Failed to load PTX module");
-        return ACE_ERROR_COMPILE;
-    }
-    
-    err = cuModuleGetFunction(&k->func, k->module, name);
-    if (err != CUDA_SUCCESS) {
-        cuModuleUnload(k->module);
-        free(k->name);
-        free(k);
-        if (err_msg) *err_msg = strdup("Failed to get kernel function");
-        return ACE_ERROR_COMPILE;
-    }
-    
-    *kernel = k;
-    return ACE_OK;
-}
 
+        if (cuModuleGetFunction(&k->func, k->module, kernel_def->name) != CUDA_SUCCESS) {
+            cuModuleUnload(k->module);
+            free(k->name);
+            free(k);
+            return ACE_ERROR_COMPILE;
+        }
+
+        /* 添加到缓存 */
+        k->next = d->kernel_cache.buckets[bucket];
+        d->kernel_cache.buckets[bucket] = k;
+        cached = k;
 #else
-
-static ace_error_t cuda_kernel_compile(void* dev, const char* name, const char* src,
-                                        void** kernel, char** err_msg) {
-    if (err_msg) *err_msg = strdup("NVRTC not available");
-    return ACE_ERROR_COMPILE;
-}
-
-#endif /* NVRTC_AVAILABLE */
-
-static void cuda_kernel_release(void* kernel) {
-    cuda_kernel_t* k = (cuda_kernel_t*)kernel;
-    if (k) {
-        if (k->module) cuModuleUnload(k->module);
-        free(k->name);
-        free(k);
+        free(cuda_src);
+        return ACE_ERROR_COMPILE;
+#endif
     }
-}
 
-static ace_error_t cuda_kernel_launch(void* kernel, ace_launch_config_t* cfg,
-                                       void** args, size_t* sizes, int n) {
-    cuda_kernel_t* k = (cuda_kernel_t*)kernel;
-    if (!k || !k->func) return ACE_ERROR_LAUNCH;
-    
-    cuCtxSetCurrent(k->dev->context);
-    
+    /* 执行内核 */
     void* kernel_args[16];
-    for (int i = 0; i < n && i < 16; i++) {
-        kernel_args[i] = args[i];
-    }
+    CUdeviceptr ptr_values[16];
     
+    for (int i = 0; i < n && i < 16; i++) {
+        if (sizes[i] == ACE_ARG_BUFFER) {
+            cuda_buffer_t* buf = (cuda_buffer_t*)args[i];
+            ptr_values[i] = buf->ptr;
+            kernel_args[i] = &ptr_values[i];
+        } else {
+            kernel_args[i] = args[i];
+        }
+    }
+
     CUresult err = cuLaunchKernel(
-        k->func,
+        cached->func,
         (unsigned int)cfg->grid[0], (unsigned int)cfg->grid[1], (unsigned int)cfg->grid[2],
         (unsigned int)cfg->block[0], (unsigned int)cfg->block[1], (unsigned int)cfg->block[2],
         (unsigned int)cfg->shared_mem, NULL,
         kernel_args, NULL
     );
+
+    if (err != CUDA_SUCCESS) {
+        printf("[CUDA] cuLaunchKernel failed: %d\n", err);
+        return ACE_ERROR_LAUNCH;
+    }
     
-    return (err == CUDA_SUCCESS) ? ACE_OK : ACE_ERROR_LAUNCH;
+    err = cuCtxSynchronize();
+    if (err != CUDA_SUCCESS) {
+        printf("[CUDA] cuCtxSynchronize failed: %d\n", err);
+        return ACE_ERROR_LAUNCH;
+    }
+    
+    return ACE_OK;
 }
 
 /* Backend registration */
@@ -396,8 +419,6 @@ static ace_backend_ops_t cuda_ops = {
     .mem_write = cuda_mem_write,
     .mem_read = cuda_mem_read,
     .finish = cuda_finish,
-    .kernel_compile = cuda_kernel_compile,
-    .kernel_release = cuda_kernel_release,
     .kernel_launch = cuda_kernel_launch,
 };
 
