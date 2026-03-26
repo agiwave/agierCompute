@@ -218,20 +218,42 @@ static char* translate_to_opencl(const char* name, const char* src, ace_dtype_t 
 
     size_t body_len = body_end - body_start - 1;
 
-    /* BF16 辅助宏 */
-    const char* bf16_macros = "";
-    char bf16_buf[512] = "";
+    /* BF16 辅助宏和函数
+     * BF16 格式：1 位符号 + 8 位指数 + 7 位尾数
+     * Float32 格式：1 位符号 + 8 位指数 + 23 位尾数
+     * BF16 指数偏置：127, Float32 指数偏置：127
+     */
+    const char* bf16_helpers = "";
+    char bf16_buf[1024] = "";
     if (dtype == ACE_DTYPE_BFLOAT16) {
         snprintf(bf16_buf, sizeof(bf16_buf),
-            "#define BF16_TO_FLOAT(x) as_float((uint)(x) << 16)\n"
-            "#define FLOAT_TO_BF16(x) as_ushort(as_uint(x) >> 16)\n"
-            "#define BF16_ADD(a, b) FLOAT_TO_BF16(BF16_TO_FLOAT(a) + BF16_TO_FLOAT(b))\n"
-            "#define BF16_MUL(a, b) FLOAT_TO_BF16(BF16_TO_FLOAT(a) * BF16_TO_FLOAT(b))\n");
-        bf16_macros = bf16_buf;
+            "/* BF16 转换函数 */\n"
+            "float bf16_to_f32(ushort x) {\n"
+            "    uint sign = (x >> 15) & 0x1;\n"
+            "    uint exp = (x >> 7) & 0xFF;\n"
+            "    uint man = x & 0x7F;\n"
+            "    if (exp == 0) return sign != 0 ? -0.0f : 0.0f;\n"
+            "    if (exp == 255) return sign != 0 ? -INFINITY : INFINITY;\n"
+            "    uint result = (sign << 31) | ((exp + 112) << 23) | (man << 16);\n"
+            "    return as_float(result);\n"
+            "}\n"
+            "ushort f32_to_bf16(float x) {\n"
+            "    uint u = as_uint(x);\n"
+            "    ushort sign = (ushort)((u >> 16) & 0x8000);\n"
+            "    ushort exp = (ushort)(((u >> 23) & 0xFF) - 112);\n"
+            "    ushort man = (ushort)((u >> 16) & 0x7F);\n"
+            "    if ((u & 0x7FFFFFFF) == 0) return sign;\n"
+            "    if (exp < 0) return sign;\n"
+            "    if (exp > 254) return sign | 0x7F80;\n"
+            "    return sign | (exp << 7) | man;\n"
+            "}\n"
+            "ushort bf16_add(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
+            "ushort bf16_mul(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n");
+        bf16_helpers = bf16_buf;
     }
 
-    size_t total_len = strlen(name) + params_len + body_len + 512 + 
-                       strlen(extension) + strlen(bf16_macros);
+    size_t total_len = strlen(name) + params_len + body_len + 1024 +
+                       strlen(extension) + strlen(bf16_helpers);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
@@ -245,7 +267,7 @@ static char* translate_to_opencl(const char* name, const char* src, ace_dtype_t 
         "    %.*s\n"
         "}\n",
         extension,
-        bf16_macros,
+        bf16_helpers,
         name, params,
         (int)body_len, body_start + 1
     );

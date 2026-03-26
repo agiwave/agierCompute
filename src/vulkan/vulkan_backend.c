@@ -71,20 +71,142 @@ static VkInstance g_instance = VK_NULL_HANDLE;
 static int g_initialized = 0;
 
 /* ============================================================================
- * GLSL 类型名称辅助函数
+ * 设备扩展支持检测
  * ============================================================================ */
 
-static const char* get_glsl_type_name(ace_dtype_t dtype) {
+typedef struct {
+    int has_float16;           /* shaderFloat16 */
+    int has_int8;              /* shaderInt8 */
+    int has_int16;             /* shaderInt16 */
+    int has_16bit_storage;     /* VK_KHR_16bit_storage */
+    int has_8bit_storage;      /* VK_KHR_8bit_storage */
+    int has_bfloat16;          /* VK_KHR_shader_bfloat16 */
+} vk_device_features_t;
+
+static vk_device_features_t g_device_features = {0};
+
+static void detect_device_features(VkPhysicalDevice physical_device) {
+    /* 检测 Vulkan 1.2 特性 */
+    VkPhysicalDeviceVulkan12Features features12 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+    };
+    
+    VkPhysicalDeviceFeatures2 features2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &features12
+    };
+    
+    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
+    
+    g_device_features.has_float16 = features12.shaderFloat16;
+    g_device_features.has_int8 = features12.shaderInt8;
+    g_device_features.has_int16 = features12.shaderInt16;
+    
+    /* 检测 16-bit storage 扩展 */
+    VkPhysicalDevice16BitStorageFeatures storage16 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES
+    };
+    features2.pNext = &storage16;
+    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
+    
+    g_device_features.has_16bit_storage = storage16.storageBuffer16BitAccess;
+    
+    /* 检测 8-bit storage 扩展 */
+    VkPhysicalDevice8BitStorageFeatures storage8 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES
+    };
+    features2.pNext = &storage8;
+    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
+    
+    g_device_features.has_8bit_storage = storage8.storageBuffer8BitAccess;
+    
+    /* 检测 bfloat16 扩展 */
+    VkPhysicalDeviceShaderBFloat16FeaturesKHR bf16_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR
+    };
+    features2.pNext = &bf16_features;
+    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
+    
+    g_device_features.has_bfloat16 = bf16_features.shaderBFloat16;
+    
+    printf("[Vulkan] Device features: FP16=%d, INT8=%d, INT16=%d, 16bit_storage=%d, 8bit_storage=%d, BF16=%d\n",
+           g_device_features.has_float16,
+           g_device_features.has_int8,
+           g_device_features.has_int16,
+           g_device_features.has_16bit_storage,
+           g_device_features.has_8bit_storage,
+           g_device_features.has_bfloat16);
+}
+
+/* ============================================================================
+ * GLSL 类型名称辅助函数
+ * 根据设备扩展支持选择原生类型或模拟类型
+ * ============================================================================ */
+
+/* 检查是否支持某类型的原生 storage buffer */
+static int supports_native_storage(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT16:
+            return g_device_features.has_float16 && g_device_features.has_16bit_storage;
+        case ACE_DTYPE_BFLOAT16:
+            return g_device_features.has_bfloat16 && g_device_features.has_16bit_storage;
+        case ACE_DTYPE_INT8:
+        case ACE_DTYPE_UINT8:
+            return g_device_features.has_int8 && g_device_features.has_8bit_storage;
+        case ACE_DTYPE_INT16:
+            return g_device_features.has_int16 && g_device_features.has_16bit_storage;
+        case ACE_DTYPE_INT64:
+            return 1;  /* int64_t 通常都支持 */
+        default:
+            return 1;  /* float, int, uint 总是支持 */
+    }
+}
+
+/* 获取 buffer 存储使用的类型名称（可能使用模拟类型） */
+static const char* get_glsl_buffer_type_name(ace_dtype_t dtype) {
+    if (supports_native_storage(dtype)) {
+        /* 使用原生类型 */
+        switch (dtype) {
+            case ACE_DTYPE_FLOAT32:  return "float";
+            case ACE_DTYPE_FLOAT64:  return "double";
+            case ACE_DTYPE_INT32:    return "int";
+            case ACE_DTYPE_INT64:    return "int64_t";
+            case ACE_DTYPE_INT8:     return "int8_t";
+            case ACE_DTYPE_UINT8:    return "uint8_t";
+            case ACE_DTYPE_INT16:    return "int16_t";
+            case ACE_DTYPE_FLOAT16:  return "float16_t";
+            case ACE_DTYPE_BFLOAT16: return "bfloat16_t";  /* 原生 BF16 */
+            default:                 return "float";
+        }
+    } else {
+        /* 使用 uint 模拟 */
+        switch (dtype) {
+            case ACE_DTYPE_FLOAT16:
+            case ACE_DTYPE_BFLOAT16:
+            case ACE_DTYPE_INT16:
+            case ACE_DTYPE_UINT8:
+            case ACE_DTYPE_INT8:
+                return "uint";
+            case ACE_DTYPE_INT64:
+                return "uint";  /* 使用两个 uint 或一个 uint 存储 */
+            default:
+                return "float";
+        }
+    }
+}
+
+/* 获取 shader 内部计算使用的类型名称 */
+static const char* get_glsl_compute_type_name(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT32:  return "float";
         case ACE_DTYPE_FLOAT64:  return "double";
         case ACE_DTYPE_INT32:    return "int";
-        case ACE_DTYPE_INT64:    return "int64_t";  /* Vulkan 支持 64 位整数 */
+        case ACE_DTYPE_INT64:    return "int64_t";
         case ACE_DTYPE_INT8:     return "int8_t";
         case ACE_DTYPE_UINT8:    return "uint8_t";
         case ACE_DTYPE_INT16:    return "int16_t";
         case ACE_DTYPE_FLOAT16:  return "float16_t";
-        case ACE_DTYPE_BFLOAT16: return "int16_t";  /* BF16 使用 int16_t 存储 */
+        case ACE_DTYPE_BFLOAT16: return "bfloat16_t";
         default:                 return "float";
     }
 }
@@ -94,23 +216,31 @@ static int is_float_dtype(ace_dtype_t dtype) {
             dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16);
 }
 
-/* 检查数据类型是否需要特殊扩展 */
+/* 检查数据类型是否需要特殊扩展
+ * Vulkan 1.2+ 原生支持 float16_t/int8_t/int16_t/int64_t 类型
+ * Storage buffer 使用这些类型需要 VK_KHR_16bit_storage / VK_KHR_8bit_storage
+ * GLSL 中需要声明对应的 GL_EXT 扩展
+ */
 static const char* get_glsl_extension(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT64:
+            /* FP64 需要扩展支持 */
             return "#extension GL_ARB_gpu_shader_fp64 : require\n";
         case ACE_DTYPE_INT64:
-            /* INT64: 使用 GL_EXT_shader_explicit_arithmetic_types_int64 扩展
-             * 这是 Vulkan 支持 64 位整数的标准扩展 */
+            /* INT64: 需要 explicit arithmetic types 扩展 */
             return "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
         case ACE_DTYPE_FLOAT16:
+            /* FP16: 需要 explicit arithmetic types float16 扩展 */
             return "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
         case ACE_DTYPE_BFLOAT16:
+            /* BF16: 使用 int16_t 模拟，需要 int16 扩展 */
             return "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
         case ACE_DTYPE_INT8:
         case ACE_DTYPE_UINT8:
+            /* INT8: 需要 explicit arithmetic types int8 扩展 */
             return "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
         case ACE_DTYPE_INT16:
+            /* INT16: 需要 explicit arithmetic types int16 扩展 */
             return "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
         default:
             return "";
@@ -127,7 +257,10 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
     if (!body_start || !body_end) return strdup("#version 450\nlayout(local_size_x=256) in;\nvoid main(){}\n");
 
     size_t body_len = body_end - body_start - 1;
-    const char* glsl_type = get_glsl_type_name(dtype);
+    /* 根据设备支持选择 buffer 类型和计算类型 */
+    const char* buffer_type = get_glsl_buffer_type_name(dtype);
+    const char* compute_type = get_glsl_compute_type_name(dtype);
+    int use_native = supports_native_storage(dtype);
 
     typedef struct {
         char name[64];
@@ -197,10 +330,7 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
             if (!params[i].is_buffer) {
                 /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
                 char line[128];
-                const char* scalar_type = (scalar_idx == 0) ? "int" : 
-                                         (dtype == ACE_DTYPE_FLOAT16 ? "float16_t" :
-                                          dtype == ACE_DTYPE_BFLOAT16 ? "int16_t" :
-                                          is_float_dtype(dtype) ? "float" : "int");
+                const char* scalar_type = (scalar_idx == 0) ? "int" : glsl_type;
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
                 char access[128];
@@ -234,43 +364,64 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
 
     /* 获取扩展声明 */
     const char* extensions = get_glsl_extension(dtype);
-    
-    /* BF16 类型定义 */
+
+    /* BF16 类型定义和辅助函数
+     * 注意：Vulkan GLSL 不支持在函数参数中使用 int16_t
+     * 必须使用 uint 作为参数类型，在函数内部转换
+     */
     const char* type_defs = "";
-    char bf16_defs[512] = "";
+    char bf16_defs[1024] = "";
     if (dtype == ACE_DTYPE_BFLOAT16) {
+        /* BF16: 使用 uint 存储和传输，在 shader 内部转换为 float 计算 */
         snprintf(bf16_defs, sizeof(bf16_defs),
-            "typedef int16_t bfloat16_t;\n"
-            "float bf16_to_f32(bfloat16_t x) {\n"
-            "    return unpackFloat2x8((x << 8) | 0x0000);\n"
+            "/* BF16 辅助函数 - 使用 uint 避免 int16_t 参数问题 */\n"
+            "float bf16_to_f32(uint x) {\n"
+            "    int sign = int((x >> 15) & 0x1u);\n"
+            "    int exp = int((x >> 7) & 0xFFu);\n"
+            "    int man = int(x & 0x7Fu);\n"
+            "    if (exp == 0) return sign != 0 ? -0.0 : 0.0;\n"
+            "    if (exp == 255) return sign != 0 ? -1.0/0.0 : 1.0/0.0;\n"
+            "    int result = (sign << 31) | ((exp + 112) << 23) | (man << 16);\n"
+            "    return uintBitsToFloat(uint(result));\n"
             "}\n"
-            "bfloat16_t f32_to_bf16(float x) {\n"
-            "    return bfloat16_t((packFloat2x8(x) >> 8) & 0xFFFF);\n"
+            "uint f32_to_bf16(float x) {\n"
+            "    uint u = floatBitsToUint(x);\n"
+            "    uint sign = (u >> 16) & 0x8000u;\n"
+            "    uint exp = ((u >> 23) & 0xFFu) - 112u;\n"
+            "    uint man = (u >> 16) & 0x7Fu;\n"
+            "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
+            "    if (exp > 254u) return sign | 0x7F80u;\n"
+            "    return sign | (exp << 7u) | man;\n"
             "}\n");
         type_defs = bf16_defs;
     } else if (dtype == ACE_DTYPE_FLOAT16) {
-        type_defs = "";  /* float16_t 是 GLSL 内置类型 */
+        type_defs = "";
     }
 
-    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + strlen(type_defs);
+    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + strlen(type_defs) + strlen(body);
     char* out = (char*)malloc(len);
 
     snprintf(out, len,
         "#version 450\n"
-        "%s"
-        "%s"
+        "%s"   /* extensions */
+        "%s"   /* type_defs */
+        "%s"   /* buffers */
         "layout(local_size_x = 256) in;\n"
-        "%s\n"
-        "%s\n"
-        "%s\n"
+        "%s"   /* push_constants */
+        "%s"   /* pc_access */
         "#define GID int(gl_GlobalInvocationID.x)\n"
         "#define LID int(gl_LocalInvocationID.x)\n"
         "#define BSIZE 256\n"
         "#define BARRIER() barrier()\n"
-        "void main() { %s }\n",
+        "void main() {\n"
+        "%s"   /* body */
+        "}\n",
         extensions,
         type_defs,
-        buffers, push_constants, pc_access, body);
+        buffers,
+        push_constants,
+        pc_access,
+        body);
 
     free(body);
     return out;
@@ -563,6 +714,7 @@ static ace_error_t vk_kernel_compile(void* dev, ace_kernel_def_t* kernel_def,
         if (err_msg) {
             const char* err = shaderc_result_get_error_message(result);
             *err_msg = strdup(err);
+            printf("[Vulkan] Generated GLSL code:\n---\n%s\n---\n", glsl);
         }
         shaderc_result_release(result);
         free(glsl);
@@ -688,7 +840,7 @@ static ace_error_t vk_kernel_compile(void* dev, ace_kernel_def_t* kernel_def,
     return ACE_OK;
 }
 #else
-static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* src,
+static ace_error_t vk_kernel_compile(void* dev, ace_kernel_def_t* kernel_def,
                                       void** kernel, char** err_msg) {
     if (err_msg) *err_msg = strdup("Vulkan requires shaderc");
     return ACE_ERROR_COMPILE;

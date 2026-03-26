@@ -427,7 +427,11 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         opts[0] = arch_opt;
         opts[1] = "-default-device";
         opts[2] = "--std=c++11";
-        opts[3] = "--include-path=/usr/include";  /* 添加 CUDA 头文件搜索路径 */
+#ifdef _WIN32
+        opts[3] = "--include-path=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/include";
+#else
+        opts[3] = "--include-path=/usr/include";
+#endif
 
         /* 为 FP16 和 BF16 启用半精度支持 */
         if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16) {

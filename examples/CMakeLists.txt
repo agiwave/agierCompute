@@ -25,17 +25,29 @@ target_link_libraries(test_vulkan PRIVATE ace_core)
 # 5. 用户内核测试
 add_executable(test_kernels kernel_tests.c)
 target_include_directories(test_kernels PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_kernels PRIVATE ace_core m)
+if(WIN32)
+    target_link_libraries(test_kernels PRIVATE ace_core)
+else()
+    target_link_libraries(test_kernels PRIVATE ace_core m)
+endif()
 
 # 6. 数据类型测试（包含 AI 数据类型：FLOAT16, BFLOAT16, INT8, UINT8, INT16）
 add_executable(test_dtypes test_dtypes.c)
 target_include_directories(test_dtypes PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_dtypes PRIVATE ace_core m)
+if(WIN32)
+    target_link_libraries(test_dtypes PRIVATE ace_core)
+else()
+    target_link_libraries(test_dtypes PRIVATE ace_core m)
+endif()
 
 # 6b. 数据类型调试测试
 add_executable(test_dtype_debug test_dtype_debug.c)
 target_include_directories(test_dtype_debug PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_dtype_debug PRIVATE ace_core m)
+if(WIN32)
+    target_link_libraries(test_dtype_debug PRIVATE ace_core)
+else()
+    target_link_libraries(test_dtype_debug PRIVATE ace_core m)
+endif()
 
 # 7. 用户自定义内核示例
 add_executable(example_user_kernels user_kernels.c)
@@ -52,7 +64,16 @@ add_executable(example_device_enum device_enum.c)
 target_include_directories(example_device_enum PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(example_device_enum PRIVATE ace_core)
 
-# 10. 性能基准测试
+# 10. 完整数据类型测试 - 覆盖所有后端和所有数据类型
+add_executable(test_all_dtypes test_all_dtypes.c)
+target_include_directories(test_all_dtypes PRIVATE ${PROJECT_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(test_all_dtypes PRIVATE ace_core)
+else()
+    target_link_libraries(test_all_dtypes PRIVATE ace_core m)
+endif()
+
+# 11. 性能基准测试
 add_library(ace_test STATIC lib/ace_test.c)
 target_include_directories(ace_test PRIVATE ${PROJECT_SOURCE_DIR}/include lib)
 
@@ -67,13 +88,6 @@ target_link_libraries(benchmark PRIVATE ace_core ace_test m)
 enable_testing()
 
 # 后端测试
-# 注意：CPU 后端测试已禁用，因为 CPU 后端是占位实现
-# add_test(NAME CPU_SimpleTest COMMAND simple_test)
-# set_tests_properties(CPU_SimpleTest PROPERTIES
-#     LABELS "CPU;Backend;Quick"
-#     TIMEOUT 60
-# )
-
 add_test(NAME CUDA_Backend COMMAND test_cuda)
 set_tests_properties(CUDA_Backend PROPERTIES
     LABELS "CUDA;Backend"
@@ -99,10 +113,17 @@ set_tests_properties(All_Kernels PROPERTIES
     TIMEOUT 600
 )
 
-# 数据类型测试（包含 AI 数据类型）
+# 数据类型测试 - 完整测试所有数据类型 (包括 FP16/BF16)
 add_test(NAME Data_Types COMMAND test_dtypes)
 set_tests_properties(Data_Types PROPERTIES
     LABELS "All;DataTypes;Functionality;AI"
+    TIMEOUT 300
+)
+
+# 完整数据类型测试 - 所有后端统一测试
+add_test(NAME All_DataTypes COMMAND test_all_dtypes)
+set_tests_properties(All_DataTypes PROPERTIES
+    LABELS "All;DataTypes;CUDA;OpenCL;Vulkan;FP16;BF16"
     TIMEOUT 300
 )
 

@@ -2,6 +2,15 @@
 # AgierCompute Vulkan Backend
 # =============================================================================
 
+# 设置 Vulkan SDK 路径（Windows 常见安装位置）
+if(WIN32)
+    set(VULKAN_SDK_PATHS
+        "C:/Apps/VulkanSDK"
+        "C:/VulkanSDK"
+        "$ENV{VULKAN_SDK}"
+    )
+endif()
+
 find_package(Vulkan QUIET)
 
 if(Vulkan_FOUND)
@@ -16,14 +25,19 @@ if(Vulkan_FOUND)
             ${PROJECT_SOURCE_DIR}/src
     )
 
-    target_compile_definitions(ace_be_vulkan PRIVATE 
+    target_compile_definitions(ace_be_vulkan PRIVATE
         ACE_BACKEND_EXPORTS
         VULKAN_AVAILABLE=1
     )
 
     # 查找 shaderc 库用于 SPIR-V 编译
-    find_library(SHADERC_SHARED_LIB NAMES shaderc_shared libshaderc_shared 
+    find_library(SHADERC_SHARED_LIB NAMES shaderc_shared shaderc_combined shaderc
         HINTS
+            ${VULKAN_SDK_PATHS}
+            "${Vulkan_INCLUDE_DIRS}/.."
+            "${Vulkan_INCLUDE_DIRS}/../Lib"
+            "C:/Apps/VulkanSDK/Lib"
+            "C:/VulkanSDK/Lib"
             /lib/x86_64-linux-gnu
             /usr/lib/x86_64-linux-gnu
             /usr/local/lib
@@ -32,6 +46,9 @@ if(Vulkan_FOUND)
     if(SHADERC_SHARED_LIB)
         target_compile_definitions(ace_be_vulkan PRIVATE SHADERC_AVAILABLE=1)
         target_link_libraries(ace_be_vulkan PRIVATE ${SHADERC_SHARED_LIB})
+        message(STATUS "  Shaderc library found: ${SHADERC_SHARED_LIB}")
+    else()
+        message(STATUS "  Shaderc library not found - Vulkan will work but cannot compile kernels at runtime")
     endif()
 
     target_link_libraries(ace_be_vulkan PRIVATE

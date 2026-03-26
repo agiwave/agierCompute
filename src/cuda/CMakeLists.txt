@@ -24,8 +24,16 @@ if(CMAKE_CUDA_COMPILER)
     )
 
     # 查找 NVRTC 库
-    find_library(NVRTC_LIB nvrtc 
+    find_library(NVRTC_LIB nvrtc
         HINTS
+            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/lib/x64"
+            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.5/lib/x64"
+            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4/lib/x64"
+            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.3/lib/x64"
+            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/lib/x64"
+            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.1/lib/x64"
+            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.0/lib/x64"
+            "C:/Program Files/NVIDIA Corporation/CUDA/v12.6/lib/x64"
             /lib/x86_64-linux-gnu
             /usr/lib/x86_64-linux-gnu
             /usr/local/cuda/lib64
