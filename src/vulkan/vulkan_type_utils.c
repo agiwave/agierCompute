@@ -290,6 +290,9 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     const char* type_defs = "";
     static char type_defs_buf[2048];
     
+    /* Buffer 类型：模拟模式使用 uint 存储，但保持正确的类型别名 */
+    const char* buffer_type = use_native ? vk_get_buffer_type_name(dtype) : "uint";
+    
     if (!use_native) {
         /* 模拟模式 - 定义自定义类型和 kadd/kmul 宏 */
         if (dtype == ACE_DTYPE_BFLOAT16) {
@@ -299,7 +302,7 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "    uint sign = (x >> 15) & 0x1u;\n"
                 "    uint exp = (x >> 7) & 0xFFu;\n"
                 "    uint man = x & 0x7Fu;\n"
-                "    if (exp == 0) return sign != 0u ? -0.0 : 0.0;\n"
+                "    if (exp == 0u) return sign != 0u ? -0.0 : 0.0;\n"
                 "    if (exp == 255u) return sign != 0u ? -1.0/0.0 : 1.0/0.0;\n"
                 "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 16u);\n"
                 "    return uintBitsToFloat(result);\n"
@@ -315,7 +318,6 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "}\n"
                 "uint bf16_add(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
                 "uint bf16_mul(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
-                "#define bfloat16_t uint\n"
                 "#define kadd(a, b) bf16_add(a, b)\n"
                 "#define kmul(a, b) bf16_mul(a, b)\n");
         } else if (dtype == ACE_DTYPE_FLOAT16) {
@@ -341,19 +343,16 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "}\n"
                 "uint f16_add(uint a, uint b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
                 "uint f16_mul(uint a, uint b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
-                "#define half uint\n"
                 "#define kadd(a, b) f16_add(a, b)\n"
                 "#define kmul(a, b) f16_mul(a, b)\n");
         } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
             snprintf(type_defs_buf, sizeof(type_defs_buf),
                 "/* INT8/UINT8 模拟 */\n"
-                "#define int8_t uint\n"
                 "#define kadd(a, b) (((a) + (b)) & 0xFFu)\n"
                 "#define kmul(a, b) (((a) * (b)) & 0xFFu)\n");
         } else if (dtype == ACE_DTYPE_INT16) {
             snprintf(type_defs_buf, sizeof(type_defs_buf),
                 "/* INT16 模拟 */\n"
-                "#define int16_t uint\n"
                 "#define kadd(a, b) (((a) + (b)) & 0xFFFFu)\n"
                 "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n");
         }
