@@ -69,7 +69,7 @@ static void test_vec_mul(ace_device_t dev) {
 
     /* 使用简化宏 */
     int n = N;
-    ACE_INVOKE_1D(dev, kernel_vec_mul, FLOAT32, N, &n, buf_a, buf_b, buf_c);
+    ACE_INVOKE(dev, kernel_vec_mul, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_c, h_c, N * sizeof(float)));
@@ -102,7 +102,7 @@ static void test_sigmoid(ace_device_t dev) {
 
     /* 使用简化宏 */
     int n = N;
-    ACE_INVOKE_1D(dev, kernel_sigmoid, FLOAT32, N, &n, buf_in, buf_out);
+    ACE_INVOKE(dev, kernel_sigmoid, ACE_DTYPE_FLOAT32, N, &N, buf_in, buf_out);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_out, h_out, N * sizeof(float)));
@@ -162,7 +162,7 @@ static void test_sqrt(ace_device_t dev) {
 
     /* 使用简化宏 */
     int n = N;
-    ACE_INVOKE_1D(dev, kernel_sqrt, FLOAT32, N, &n, buf_in, buf_out);
+    ACE_INVOKE(dev, kernel_sqrt, ACE_DTYPE_FLOAT32, N, &N, buf_in, buf_out);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_out, h_out, N * sizeof(float)));
@@ -191,7 +191,7 @@ static void test_exp(ace_device_t dev) {
 
     /* 使用简化宏 */
     int n = N;
-    ACE_INVOKE_1D(dev, kernel_exp, FLOAT32, N, &n, buf_in, buf_out);
+    ACE_INVOKE(dev, kernel_exp, ACE_DTYPE_FLOAT32, N, &N, buf_in, buf_out);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_out, h_out, N * sizeof(float)));

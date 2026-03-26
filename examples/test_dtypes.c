@@ -82,17 +82,8 @@ static ace_test_result_t test_vec_add_dtype(ace_device_t dev, void* user_data) {
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
 
-    int n = N;
-    void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-
-    ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), cfg->dtype, N, args, types, 4);
-    if (err != ACE_OK) {
-        printf("INVOKE_ERROR(%d)\n", err);
-        free(h_a); free(h_b); free(h_c);
-        ace_buffer_free(buf_a); ace_buffer_free(buf_b); ace_buffer_free(buf_c);
-        return ACE_TEST_FAIL;
-    }
+    /* 使用 ACE_INVOKE 宏（动态数据类型） */
+    ACE_INVOKE(dev, vec_add, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
 
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);
@@ -164,17 +155,8 @@ static ace_test_result_t test_vec_mul_dtype(ace_device_t dev, void* user_data) {
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
 
-    int n = N;
-    void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-
-    ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_mul(), cfg->dtype, N, args, types, 4);
-    if (err != ACE_OK) {
-        printf("INVOKE_ERROR(%d)\n", err);
-        free(h_a); free(h_b); free(h_c);
-        ace_buffer_free(buf_a); ace_buffer_free(buf_b); ace_buffer_free(buf_c);
-        return ACE_TEST_FAIL;
-    }
+    /* 使用 ACE_INVOKE 宏 */
+    ACE_INVOKE(dev, vec_mul, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
 
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);

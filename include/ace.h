@@ -290,7 +290,7 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
 
 /* 简化的内核调用宏 */
 #define ACE_CALL(dev, name, dtype, n, args, types, nargs) \
-    ace_kernel_invoke(dev, _ace_get_##name(), ACE_DTYPE_##dtype, n, args, types, nargs)
+    ace_kernel_invoke(dev, _ace_get_##name(), dtype, n, args, types, nargs)
 
 /* ============================================================================
  * 简化宏 - 推荐使用
@@ -314,23 +314,17 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
     } \
 } while(0)
 
-/* ACE_INVOKE 内部宏 - 构建参数数组并调用 */
-/* 注意：第一个参数通常是 int n (ACE_VAL)，其余是 buffer (ACE_BUF) */
-#define ACE_INVOKE_IMPL(dev, kernel_name, dtype, n, ...) do { \
-    void* _args[] = {__VA_ARGS__}; \
-    int _nargs = sizeof(_args) / sizeof(_args[0]); \
-    int _types[16]; \
-    for (int _i = 0; _i < _nargs && _i < 16; _i++) { \
-        _types[_i] = (_i == 0) ? ACE_VAL : ACE_BUF; \
-    } \
-    ace_kernel_invoke(dev, _ace_get_##kernel_name(), ACE_DTYPE_##dtype, n, _args, _types, _nargs); \
-} while(0)
+/* ACE_INVOKE: 标准宏 - 自动推断参数类型（dtype 可是枚举或变量） */
+#define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
+    do { \
+        void* _args[] = {__VA_ARGS__}; \
+        int _nargs = sizeof(_args) / sizeof(_args[0]); \
+        int _types[16]; \
+        for (int _i = 0; _i < _nargs && _i < 16; _i++) \
+            _types[_i] = (_i == 0) ? ACE_VAL : ACE_BUF; \
+        ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _types, _nargs); \
+    } while(0)
 
-/* 1D 内核调用简化宏 - 最常用 */
-#define ACE_INVOKE_1D(dev, kernel_name, dtype, n, ...) \
-    ACE_INVOKE_IMPL(dev, kernel_name, dtype, n, __VA_ARGS__)
-
-#define GID        /* 全局线程ID - 在内核中使用 */
 #define LID        /* 局部线程ID */
 #define BSIZE      /* 工作组大小 */
 #define BARRIER()  /* 局部同步 */

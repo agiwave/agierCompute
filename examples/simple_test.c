@@ -53,9 +53,8 @@ int main() {
             ACE_CHECK(ace_buffer_write(buf_a, h_a, N * sizeof(float)));
             ACE_CHECK(ace_buffer_write(buf_b, h_b, N * sizeof(float)));
 
-            /* 使用简化宏执行内核 */
-            int n = N;
-            ACE_INVOKE_1D(dev, test_vec_add, FLOAT32, N, &n, buf_a, buf_b, buf_c);
+            /* 使用 ACE_INVOKE 宏执行内核 */
+            ACE_INVOKE(dev, test_vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
             ace_finish(dev);
 
             ACE_CHECK(ace_buffer_read(buf_c, h_c, N * sizeof(float)));

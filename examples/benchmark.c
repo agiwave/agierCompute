@@ -76,19 +76,16 @@ static ace_test_result_t benchmark_vec_add(ace_device_t dev, void* user_data) {
     ace_buffer_alloc(dev, bytes, &buf_c);
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
-    
-    int n = (int)N;
-    void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-    
+
     /* 预热 */
-    ace_kernel_invoke(dev, _ace_get_bench_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ACE_INVOKE(dev, bench_vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
     ace_finish(dev);
-    
+
     /* 测试 */
     double start = get_time_ms();
-    for (int i = 0; i < cfg->iterations; i++)
-        ace_kernel_invoke(dev, _ace_get_bench_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    for (int i = 0; i < cfg->iterations; i++) {
+        ACE_INVOKE(dev, bench_vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+    }
     ace_finish(dev);
     double elapsed = (get_time_ms() - start) / cfg->iterations;
     
@@ -123,17 +120,14 @@ static ace_test_result_t benchmark_vec_mul(ace_device_t dev, void* user_data) {
     ace_buffer_alloc(dev, bytes, &buf_c);
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
-    
-    int n = (int)N;
-    void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-    
-    ace_kernel_invoke(dev, _ace_get_bench_vec_mul(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+
+    ACE_INVOKE(dev, bench_vec_mul, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
     ace_finish(dev);
-    
+
     double start = get_time_ms();
-    for (int i = 0; i < cfg->iterations; i++)
-        ace_kernel_invoke(dev, _ace_get_bench_vec_mul(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    for (int i = 0; i < cfg->iterations; i++) {
+        ACE_INVOKE(dev, bench_vec_mul, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+    }
     ace_finish(dev);
     double elapsed = (get_time_ms() - start) / cfg->iterations;
     
