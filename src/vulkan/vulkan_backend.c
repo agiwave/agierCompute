@@ -55,12 +55,16 @@ typedef struct {
 } vk_cached_kernel_t;
 
 #define MAX_CACHED_KERNELS 64
+#define MAX_CMD_BUFFERS 4  /* 命令缓冲池大小 */
 
 typedef struct {
     vk_device_t* dev;
     vk_cached_kernel_t kernels[MAX_CACHED_KERNELS];
     int kernel_count;
-    VkCommandBuffer cached_cmd;  /* 重用的 command buffer */
+    VkCommandBuffer cmd_buffers[MAX_CMD_BUFFERS];  /* 命令缓冲池 */
+    int cmd_buffer_index;  /* 当前使用的命令缓冲 */
+    VkFence fences[MAX_CMD_BUFFERS];  /* 同步 fence */
+    VkSemaphore semaphores[MAX_CMD_BUFFERS];  /* 信号量 */
 } vk_device_internal_t;
 
 static VkInstance g_instance = VK_NULL_HANDLE;
@@ -310,12 +314,36 @@ static ace_error_t vk_device_get(int idx, void** dev) {
 
     VkCommandPoolCreateInfo pool_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .queueFamilyIndex = d->dev->queue_family
+        .queueFamilyIndex = d->dev->queue_family,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
     };
     vkCreateCommandPool(d->dev->device, &pool_info, NULL, &d->dev->cmd_pool);
 
     d->kernel_count = 0;
-    d->cached_cmd = VK_NULL_HANDLE;  /* 初始化 cached command buffer */
+    d->cmd_buffer_index = 0;
+    
+    /* 预分配命令缓冲池 */
+    VkCommandBufferAllocateInfo cmd_alloc = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = d->dev->cmd_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = MAX_CMD_BUFFERS
+    };
+    vkAllocateCommandBuffers(d->dev->device, &cmd_alloc, d->cmd_buffers);
+    
+    /* 创建 fence 和 semaphore */
+    VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT  /* 初始为 signaled 状态 */
+    };
+    VkSemaphoreCreateInfo sem_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+    };
+    
+    for (int i = 0; i < MAX_CMD_BUFFERS; i++) {
+        vkCreateFence(d->dev->device, &fence_info, NULL, &d->fences[i]);
+        vkCreateSemaphore(d->dev->device, &sem_info, NULL, &d->semaphores[i]);
+    }
 
     printf("[Vulkan] Device: %s\n", d->dev->props.deviceName);
     free(devices);
@@ -326,11 +354,15 @@ static ace_error_t vk_device_get(int idx, void** dev) {
 static void vk_device_release(void* dev) {
     vk_device_internal_t* d = (vk_device_internal_t*)dev;
     if (d) {
-        /* Free cached command buffer */
-        if (d->cached_cmd != VK_NULL_HANDLE) {
-            vkFreeCommandBuffers(d->dev->device, d->dev->cmd_pool, 1, &d->cached_cmd);
-        }
+        /* Free command buffers */
+        vkFreeCommandBuffers(d->dev->device, d->dev->cmd_pool, MAX_CMD_BUFFERS, d->cmd_buffers);
         
+        /* Free fences and semaphores */
+        for (int i = 0; i < MAX_CMD_BUFFERS; i++) {
+            vkDestroyFence(d->dev->device, d->fences[i], NULL);
+            vkDestroySemaphore(d->dev->device, d->semaphores[i], NULL);
+        }
+
         /* Free cached kernels */
         for (int i = 0; i < d->kernel_count; i++) {
             vk_cached_kernel_t* k = &d->kernels[i];
@@ -680,18 +712,17 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         }
     }
 
-    /* 使用缓存的 command buffer 或创建新的 */
-    VkCommandBuffer cmd = d_int->cached_cmd;
-    if (cmd == VK_NULL_HANDLE) {
-        VkCommandBufferAllocateInfo cmd_alloc = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = vk_dev->cmd_pool,
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1
-        };
-        vkAllocateCommandBuffers(vk_dev->device, &cmd_alloc, &cmd);
-        d_int->cached_cmd = cmd;
-    }
+    /* 使用环形命令缓冲池 */
+    int cmd_idx = d_int->cmd_buffer_index;
+    VkCommandBuffer cmd = d_int->cmd_buffers[cmd_idx];
+    VkFence fence = d_int->fences[cmd_idx];
+    
+    /* 等待之前的命令完成 */
+    vkWaitForFences(vk_dev->device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(vk_dev->device, 1, &fence);
+    
+    /* 重置命令缓冲 */
+    vkResetCommandBuffer(cmd, 0);
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -721,8 +752,10 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         .commandBufferCount = 1,
         .pCommandBuffers = &cmd
     };
-    vkQueueSubmit(vk_dev->queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(vk_dev->queue);
+    vkQueueSubmit(vk_dev->queue, 1, &submit, fence);
+    
+    /* 循环使用命令缓冲 */
+    d_int->cmd_buffer_index = (cmd_idx + 1) % MAX_CMD_BUFFERS;
 
     return ACE_OK;
 }
