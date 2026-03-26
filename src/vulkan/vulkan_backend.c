@@ -83,13 +83,12 @@ static vk_cached_kernel_t* find_cached_kernel(vk_device_internal_t* dev_int, con
  * GLSL translation
  * ============================================================================ */
 
-static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype, int* n_buffers, int* n_scalars) {
+static char* translate_to_glsl(const char* name, const char* src, const char* type_name, int* n_buffers, int* n_scalars) {
     const char* body_start = strchr(src, '{');
     const char* body_end = strrchr(src, '}');
     if (!body_start || !body_end) return strdup("#version 450\nlayout(local_size_x=256) in;\nvoid main(){}\n");
 
     size_t body_len = body_end - body_start - 1;
-    const char* type_name = ace_dtype_name(dtype);
 
     typedef struct {
         char name[64];
@@ -175,9 +174,15 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
     for (int i = 0; i < n_params && buf_idx < *n_buffers; i++) {
         if (params[i].is_buffer) {
             char buf_decl[256];
+            /* GLSL 类型映射 */
+            const char* glsl_type = type_name;
+            if (strcmp(type_name, "long") == 0) glsl_type = "int64_t";
+            else if (strcmp(type_name, "double") == 0) glsl_type = "float64_t";
+            else if (strcmp(type_name, "half") == 0) glsl_type = "float16_t";
+            
             snprintf(buf_decl, sizeof(buf_decl),
                 "layout(binding = %d, std430) buffer B%d { %s d%d[]; };\n",
-                buf_idx, buf_idx, type_name, buf_idx);
+                buf_idx, buf_idx, glsl_type, buf_idx);
             strcat(buffers, buf_decl);
             char def[128];
             snprintf(def, sizeof(def), "#define %s d%d\n", params[i].name, buf_idx);
@@ -192,8 +197,24 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
 
     size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access);
     char* out = (char*)malloc(len);
+    
+    /* 添加 GLSL 扩展和类型定义 */
+    const char* extensions = "";
+    const char* type_defs = "";
+    if (strcmp(type_name, "double") == 0 || strcmp(type_name, "float64_t") == 0) {
+        extensions = "#extension GL_ARB_gpu_shader_fp64 : require\n";
+        type_defs = "";  /* float64_t 是内置类型 */
+    } else if (strcmp(type_name, "int64_t") == 0 || strcmp(type_name, "long") == 0) {
+        extensions = "#extension GL_KHR_shader_subgroup_basic : require\n";
+        type_defs = "";  /* int64_t 是内置类型 */
+    } else if (strcmp(type_name, "half") == 0 || strcmp(type_name, "float16_t") == 0) {
+        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
+    }
+    
     snprintf(out, len,
         "#version 450\n"
+        "%s"
+        "%s"
         "layout(local_size_x = 256) in;\n"
         "%s\n"
         "%s\n"
@@ -203,6 +224,7 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
         "#define BSIZE 256\n"
         "#define BARRIER() barrier()\n"
         "void main() { %s }\n",
+        extensions, type_defs,
         buffers, push_constants, pc_access, body);
 
     free(body);
@@ -485,9 +507,22 @@ static ace_error_t vk_kernel_compile(void* dev, ace_kernel_def_t* kernel_def,
 
     /* 使用 kernel_def 中的数据类型 */
     ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
+    
+    /* GLSL 类型映射 */
+    const char* glsl_type_name = "float";
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:  glsl_type_name = "float"; break;
+        case ACE_DTYPE_FLOAT64:  glsl_type_name = "double"; break;
+        case ACE_DTYPE_INT32:    glsl_type_name = "int"; break;
+        case ACE_DTYPE_INT64:    glsl_type_name = "int64_t"; break;
+        case ACE_DTYPE_INT8:     glsl_type_name = "int8_t"; break;
+        case ACE_DTYPE_UINT8:    glsl_type_name = "uint8_t"; break;
+        case ACE_DTYPE_INT16:    glsl_type_name = "int16_t"; break;
+        default: glsl_type_name = "float"; break;
+    }
 
     int n_buffers = 0, n_scalars = 0;
-    char* glsl = translate_to_glsl(kernel_def->name, kernel_def->src, dtype, &n_buffers, &n_scalars);
+    char* glsl = translate_to_glsl(kernel_def->name, kernel_def->src, glsl_type_name, &n_buffers, &n_scalars);
 
     shaderc_compilation_result_t result = shaderc_compile_into_spv(
         g_shaderc, glsl, strlen(glsl), shaderc_compute_shader, kernel_def->name, "main", NULL);

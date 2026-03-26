@@ -302,10 +302,14 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         /* 使用 kernel_def 中的数据类型 */
         const char* type_name = "float";
         switch ((ace_dtype_t)kernel_def->dtype) {
-            case ACE_DTYPE_FLOAT32: type_name = "float"; break;
-            case ACE_DTYPE_FLOAT64: type_name = "double"; break;
-            case ACE_DTYPE_INT32:   type_name = "int"; break;
-            case ACE_DTYPE_INT64:   type_name = "long"; break;
+            case ACE_DTYPE_FLOAT32:  type_name = "float"; break;
+            case ACE_DTYPE_FLOAT64:  type_name = "double"; break;
+            case ACE_DTYPE_INT32:    type_name = "int"; break;
+            case ACE_DTYPE_INT64:    type_name = "long"; break;
+            case ACE_DTYPE_FLOAT16:  type_name = "half"; break;
+            case ACE_DTYPE_INT8:     type_name = "char"; break;
+            case ACE_DTYPE_UINT8:    type_name = "unsigned char"; break;
+            case ACE_DTYPE_INT16:    type_name = "short"; break;
             default: type_name = "float"; break;
         }
 
