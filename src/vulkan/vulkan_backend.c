@@ -152,7 +152,7 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
         int scalar_idx = 0;
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
-                /* 第一个标量参数通常是 n (int)，后续可能是 float */
+                /* 所有标量都使用 int 存储 */
                 char line[128];
                 snprintf(line, sizeof(line), "  int s%d;\n", scalar_idx);
                 strcat(push_constants, line);
@@ -663,14 +663,14 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         free(buf_infos);
     }
 
-    /* Push constants - 传递 int 值（与 GLSL 类型匹配） */
+    /* Push constants - 传递 int 值或 float 的位模式 */
     int* scalars = NULL;
     if (k->n_scalars > 0) {
         scalars = (int*)calloc(k->n_scalars, sizeof(int));
         int scalar_idx = 0;
         for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
             if (sizes[i] == ACE_ARG_VALUE) {
-                /* 传递 int 值（与 GLSL 类型匹配） */
+                /* 传递 int 值或 float 的位模式 */
                 scalars[scalar_idx] = *(int*)args[i];
                 scalar_idx++;
             }
