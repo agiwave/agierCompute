@@ -15,41 +15,24 @@
 static ace_error_t compile_spirv(const char* glsl_src, uint32_t** spirv_out, size_t* spirv_size_out) {
     shaderc_compiler_t compiler = shaderc_compiler_initialize();
     if (!compiler) {
-        printf("[Vulkan] Failed to initialize shaderc compiler\n");
         return ACE_ERROR_COMPILE;
     }
 
-    /* 设置编译选项 */
-    shaderc_compile_options_t options = shaderc_compile_options_initialize();
-    if (!options) {
-        shaderc_compiler_release(compiler);
-        return ACE_ERROR_COMPILE;
-    }
-
-    /* 设置 Vulkan 目标版本 */
-    shaderc_compile_options_set_target_env(options, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_0);
-
-    /* 设置优化级别 */
-    shaderc_compile_options_set_optimization_level(options, shaderc_optimization_level_zero);
-
-    /* 生成调试信息 */
-    shaderc_compile_options_set_generate_debug_info(options);
-
+    /* 直接使用 NULL 选项，与原始代码一致 */
     shaderc_compilation_result_t result = shaderc_compile_into_spv(
         compiler,
         glsl_src, strlen(glsl_src),
         shaderc_compute_shader,
         "main",
         "main",
-        options
+        NULL
     );
 
-    shaderc_compile_options_release(options);
+    shaderc_compiler_release(compiler);
 
     if (shaderc_result_get_compilation_status(result) != shaderc_compilation_status_success) {
         printf("[Vulkan] Shader compilation error:\n%s\n", shaderc_result_get_error_message(result));
         shaderc_result_release(result);
-        shaderc_compiler_release(compiler);
         return ACE_ERROR_COMPILE;
     }
 
@@ -58,7 +41,6 @@ static ace_error_t compile_spirv(const char* glsl_src, uint32_t** spirv_out, siz
     memcpy(*spirv_out, shaderc_result_get_bytes(result), *spirv_size_out);
 
     shaderc_result_release(result);
-    shaderc_compiler_release(compiler);
     return ACE_OK;
 }
 
@@ -79,9 +61,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
     k->n_buffers = *n_buffers;
     k->n_scalars = *n_scalars;
 
-    /* 调试输出：打印生成的 GLSL 代码 */
-    /* printf("[Vulkan] Generated GLSL for %s (dtype=%d):\n---\n%s\n---\n", kernel_def->name, dtype, glsl_src); */
-
     /* 编译 SPIR-V */
     uint32_t* spirv = NULL;
     size_t spirv_size = 0;
@@ -92,15 +71,13 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
         free(glsl_src);
         return ACE_ERROR_COMPILE;
     }
-    /* printf("[Vulkan] SPIR-V compiled successfully, size=%zu bytes\n", spirv_size); */
 
-    /* 调试：保存 SPIR-V 到文件并用 spirv-val 验证 */
+    /* 保存 SPIR-V 到文件用于调试 */
     /*
     FILE* f = fopen("/tmp/test.spv", "wb");
     if (f) {
         fwrite(spirv, 1, spirv_size, f);
         fclose(f);
-        printf("[Vulkan] SPIR-V saved to /tmp/test.spv\n");
     }
     */
 #else
@@ -124,16 +101,19 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
         .codeSize = spirv_size,
         .pCode = spirv
     };
-    free(spirv);
 
     VkResult result = vkCreateShaderModule(d->dev->device, &sm_info, NULL, &k->shader);
     if (result != VK_SUCCESS) {
-        printf("[Vulkan] vkCreateShaderModule failed: %d\n", result);
+        free(spirv);
+        free(glsl_src);
         free(k->name);
         free(k->src);
         return ACE_ERROR_COMPILE;
     }
-    printf("[Vulkan] Shader module created successfully\n");
+
+    /* 现在可以 free spirv 和 glsl */
+    free(spirv);
+    free(glsl_src);
 
     /* 创建 Descriptor Set Layout */
     VkDescriptorSetLayoutBinding bindings[8];
@@ -155,7 +135,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
 
     result = vkCreateDescriptorSetLayout(d->dev->device, &dsl_info, NULL, &k->desc_layout);
     if (result != VK_SUCCESS) {
-        printf("[Vulkan] vkCreateDescriptorSetLayout failed: %d\n", result);
         vkDestroyShaderModule(d->dev->device, k->shader, NULL);
         free(k->name);
         free(k->src);
@@ -180,14 +159,12 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
 
     result = vkCreatePipelineLayout(d->dev->device, &pl_info, NULL, &k->layout);
     if (result != VK_SUCCESS) {
-        printf("[Vulkan] vkCreatePipelineLayout failed: %d\n", result);
         vkDestroyDescriptorSetLayout(d->dev->device, k->desc_layout, NULL);
         vkDestroyShaderModule(d->dev->device, k->shader, NULL);
         free(k->name);
         free(k->src);
         return ACE_ERROR_COMPILE;
     }
-    printf("[Vulkan] Pipeline layout created successfully\n");
 
     /* 创建 Compute Pipeline */
     VkPipelineShaderStageCreateInfo stage_info = {
@@ -205,7 +182,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
 
     result = vkCreateComputePipelines(d->dev->device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &k->pipeline);
     if (result != VK_SUCCESS) {
-        printf("[Vulkan] vkCreateComputePipelines failed: %d\n", result);
         vkDestroyPipelineLayout(d->dev->device, k->layout, NULL);
         vkDestroyDescriptorSetLayout(d->dev->device, k->desc_layout, NULL);
         vkDestroyShaderModule(d->dev->device, k->shader, NULL);
@@ -213,7 +189,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
         free(k->src);
         return ACE_ERROR_COMPILE;
     }
-    printf("[Vulkan] Compute pipeline created successfully\n");
 
     /* 创建 Descriptor Pool 和 Set */
     VkDescriptorPoolSize pool_sizes[8];
@@ -233,7 +208,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
 
     result = vkCreateDescriptorPool(d->dev->device, &pool_info, NULL, &k->desc_pool);
     if (result != VK_SUCCESS) {
-        printf("[Vulkan] vkCreateDescriptorPool failed: %d\n", result);
         vkDestroyPipeline(d->dev->device, k->pipeline, NULL);
         vkDestroyPipelineLayout(d->dev->device, k->layout, NULL);
         vkDestroyDescriptorSetLayout(d->dev->device, k->desc_layout, NULL);
@@ -242,7 +216,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
         free(k->src);
         return ACE_ERROR_COMPILE;
     }
-    printf("[Vulkan] Descriptor pool created successfully\n");
 
     VkDescriptorSetAllocateInfo set_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -253,7 +226,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
 
     result = vkAllocateDescriptorSets(d->dev->device, &set_info, &k->desc_set);
     if (result != VK_SUCCESS) {
-        printf("[Vulkan] vkAllocateDescriptorSets failed: %d\n", result);
         vkDestroyDescriptorPool(d->dev->device, k->desc_pool, NULL);
         vkDestroyPipeline(d->dev->device, k->pipeline, NULL);
         vkDestroyPipelineLayout(d->dev->device, k->layout, NULL);
@@ -263,7 +235,6 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
         free(k->src);
         return ACE_ERROR_COMPILE;
     }
-    printf("[Vulkan] Descriptor set allocated successfully\n");
 
     d->kernel_count++;
     return ACE_OK;
@@ -292,17 +263,12 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     if (!k) {
         ace_error_t err = create_pipeline(d, kernel_def, &n_buffers, &n_scalars);
         if (err != ACE_OK) {
-            printf("[Vulkan] create_pipeline failed: err=%d\n", err);
             return err;
         }
         k = &d->kernels[d->kernel_count - 1];
     } else {
         n_buffers = k->n_buffers;
         n_scalars = k->n_scalars;
-    }
-
-    if (n_buffers == 0) {
-        printf("[Vulkan] Warning: n_buffers=0, kernel may not work correctly\n");
     }
 
     /* 准备 Descriptor Sets */
@@ -319,7 +285,7 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             }
             desc_info[write_count].buffer = buf->buffer;
             desc_info[write_count].offset = 0;
-            desc_info[write_count].range = buf->size;
+            desc_info[write_count].range = VK_WHOLE_SIZE;  /* 使用 VK_WHOLE_SIZE */
 
             writes[write_count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[write_count].dstSet = k->desc_set;
@@ -330,10 +296,6 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             writes[write_count].pBufferInfo = &desc_info[write_count];
             write_count++;
         }
-    }
-
-    if (write_count == 0 && n_buffers > 0) {
-        printf("[Vulkan] Warning: No buffer descriptors written, n_buffers=%d, n=%d\n", n_buffers, n);
     }
 
     vkUpdateDescriptorSets(d->dev->device, write_count, writes, 0, NULL);
@@ -360,7 +322,9 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, n_scalars * sizeof(int), args);
     }
 
-    vkCmdDispatch(cmd, cfg->grid[0], cfg->grid[1], cfg->grid[2]);
+    /* 使用原始代码的 dispatch 计算方式 */
+    uint32_t groups = (uint32_t)((cfg->grid[0] * cfg->block[0] + 255) / 256);
+    vkCmdDispatch(cmd, groups, 1, 1);
     vkEndCommandBuffer(cmd);
 
     VkSubmitInfo submit_info = {
@@ -371,7 +335,6 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
     VkResult result = vkQueueSubmit(d->dev->queue, 1, &submit_info, fence);
     if (result != VK_SUCCESS) {
-        printf("[Vulkan] vkQueueSubmit failed: %d\n", result);
         return ACE_ERROR_LAUNCH;
     }
 

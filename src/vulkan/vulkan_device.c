@@ -117,12 +117,6 @@ ace_error_t vk_device_get(int idx, void** dev) {
         .pQueueCreateInfos = &qinfo
     };
 
-    /* Vulkan compute shader 是核心功能，不需要特别启用 */
-    /* 但需要启用 storage buffer 功能 */
-    VkPhysicalDeviceFeatures device_features = {0};
-    device_features.shaderStorageImageExtendedFormats = VK_TRUE;
-    dev_info.pEnabledFeatures = &device_features;
-
     if (vkCreateDevice(d->dev->physical_device, &dev_info, NULL, &d->dev->device) != VK_SUCCESS) {
         free(d->dev);
         free(d);
