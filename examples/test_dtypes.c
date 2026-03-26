@@ -38,17 +38,11 @@ typedef struct {
 } dtype_config_t;
 
 static dtype_config_t dtype_configs[] = {
-    /* 基础数据类型 */
+    /* 基础数据类型 - 所有后端都支持 */
     {ACE_DTYPE_FLOAT32, "FLOAT32", sizeof(float)},
     {ACE_DTYPE_FLOAT64, "FLOAT64", sizeof(double)},
     {ACE_DTYPE_INT32,   "INT32",   sizeof(int)},
     {ACE_DTYPE_INT64,   "INT64",   sizeof(long)},
-    
-    /* AI 常用数据类型 */
-    {ACE_DTYPE_FLOAT16, "FLOAT16", 2},
-    {ACE_DTYPE_INT8,    "INT8",    1},
-    {ACE_DTYPE_UINT8,   "UINT8",   1},
-    {ACE_DTYPE_INT16,   "INT16",   2},
 };
 
 #define NUM_DTYPES (sizeof(dtype_configs) / sizeof(dtype_configs[0]))
