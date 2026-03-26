@@ -66,6 +66,9 @@ static ace_test_result_t test_vec_add_dtype(ace_device_t dev, void* user_data) {
     } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
         double *a = h_a, *b = h_b;
         for (int i = 0; i < N; i++) { a[i] = i; b[i] = i * 2; }
+    } else if (cfg->dtype == ACE_DTYPE_INT64) {
+        int64_t *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = (int64_t)i; b[i] = (int64_t)(i * 2); }
     } else {
         int32_t *a = h_a, *b = h_b;
         for (int i = 0; i < N; i++) { a[i] = i; b[i] = i * 2; }
@@ -108,6 +111,12 @@ static ace_test_result_t test_vec_add_dtype(ace_device_t dev, void* user_data) {
             double expected = a[i] + b[i];
             if (fabs(c[i] - expected) > 1e-10) ok = 0;
         }
+    } else if (cfg->dtype == ACE_DTYPE_INT64) {
+        int64_t *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            int64_t expected = a[i] + b[i];
+            if (c[i] != expected) ok = 0;
+        }
     } else {
         int32_t *a = h_a, *b = h_b, *c = h_c;
         for (int i = 0; i < 10 && ok; i++) {
@@ -139,6 +148,9 @@ static ace_test_result_t test_vec_mul_dtype(ace_device_t dev, void* user_data) {
     } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
         double *a = h_a, *b = h_b;
         for (int i = 0; i < N; i++) { a[i] = i; b[i] = i + 1; }
+    } else if (cfg->dtype == ACE_DTYPE_INT64) {
+        int64_t *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = (int64_t)i; b[i] = (int64_t)(i + 1); }
     } else {
         int32_t *a = h_a, *b = h_b;
         for (int i = 0; i < N; i++) { a[i] = i; b[i] = i + 1; }
@@ -180,6 +192,12 @@ static ace_test_result_t test_vec_mul_dtype(ace_device_t dev, void* user_data) {
         for (int i = 0; i < 10 && ok; i++) {
             double expected = a[i] * b[i];
             if (fabs(c[i] - expected) > 1e-10) ok = 0;
+        }
+    } else if (cfg->dtype == ACE_DTYPE_INT64) {
+        int64_t *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            int64_t expected = a[i] * b[i];
+            if (c[i] != expected) ok = 0;
         }
     } else {
         int32_t *a = h_a, *b = h_b, *c = h_c;
