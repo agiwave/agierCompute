@@ -19,11 +19,6 @@ typedef struct {
     ace_device_props_t props;
 } cpu_device_t;
 
-typedef struct {
-    char* name;
-    char* src;
-} cpu_kernel_t;
-
 /* ============================================================================
  * 后端操作实现
  * ============================================================================ */
@@ -101,33 +96,9 @@ static ace_error_t cpu_finish(void* dev) {
     return ACE_OK;
 }
 
-static ace_error_t cpu_kernel_compile(void* dev, const char* name,
-                                       const char* src, void** kernel, char** err_msg) {
-    (void)dev; (void)err_msg;
-    
-    cpu_kernel_t* k = (cpu_kernel_t*)calloc(1, sizeof(*k));
-    if (!k) return ACE_ERROR_MEM;
-
-    k->name = strdup(name);
-    k->src = strdup(src);
-    printf("[CPU] Kernel '%s' registered (requires JIT for execution)\n", name);
-
-    *kernel = k;
-    return ACE_OK;
-}
-
-static void cpu_kernel_release(void* kernel) {
-    cpu_kernel_t* k = (cpu_kernel_t*)kernel;
-    if (k) {
-        free(k->name);
-        free(k->src);
-        free(k);
-    }
-}
-
-static ace_error_t cpu_kernel_launch(void* kernel, ace_launch_config_t* cfg,
-                                      void** args, size_t* sizes, int n) {
-    (void)kernel; (void)cfg; (void)args; (void)sizes; (void)n;
+static ace_error_t cpu_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
+                                      ace_launch_config_t* cfg, void** args, size_t* sizes, int n) {
+    (void)dev; (void)kernel_def; (void)cfg; (void)args; (void)sizes; (void)n;
     printf("[CPU] Warning: Kernel execution requires JIT compilation (not implemented)\n");
     return ACE_ERROR_LAUNCH;
 }
@@ -148,8 +119,6 @@ static ace_backend_ops_t cpu_ops = {
     .mem_write = cpu_mem_write,
     .mem_read = cpu_mem_read,
     .finish = cpu_finish,
-    .kernel_compile = cpu_kernel_compile,
-    .kernel_release = cpu_kernel_release,
     .kernel_launch = cpu_kernel_launch,
 };
 

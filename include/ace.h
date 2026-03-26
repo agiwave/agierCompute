@@ -221,7 +221,7 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
     static ace_kernel_t k_##name = NULL; \
     static const char* _ace_src_##name = #code; \
     static ace_kernel_t _ace_get_##name(void) { \
-        if (!k_##name) k_##name = ace_register_kernel(#name, _ace_src_##name); \
+        if (!k_##name) k_##name = ace_kernel_register(#name, _ace_src_##name); \
         return k_##name; \
     }
 
@@ -251,10 +251,6 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
     } \
 } while(0)
 
-/* 变长参数计数辅助宏 */
-#define ACE_ARG_COUNT(...) ACE_ARG_COUNT_(__VA_ARGS__, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
-#define ACE_ARG_COUNT_(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, N, ...) N
-
 /* ACE_INVOKE 内部宏 - 构建参数数组并调用 */
 /* 注意：第一个参数通常是 int n (ACE_VAL)，其余是 buffer (ACE_BUF) */
 #define ACE_INVOKE_IMPL(dev, kernel_name, dtype, n, ...) do { \
@@ -270,10 +266,6 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
 /* 1D 内核调用简化宏 - 最常用 */
 #define ACE_INVOKE_1D(dev, kernel_name, dtype, n, ...) \
     ACE_INVOKE_IMPL(dev, kernel_name, dtype, n, __VA_ARGS__)
-
-/* ============================================================================
- * 内核语言内建变量
- * ============================================================================ */
 
 #define GID        /* 全局线程ID - 在内核中使用 */
 #define LID        /* 局部线程ID */
@@ -321,7 +313,7 @@ ACE_API ace_error_t ace_buffer_read(ace_buffer_t buf, void* data, size_t size);
  * ---------------------------------------------------------------------------- */
 
 /* 注册内核 */
-ACE_API ace_kernel_t ace_register_kernel(const char* name, const char* src);
+ACE_API ace_kernel_t ace_kernel_register(const char* name, const char* src);
 
 /* 简化的内核调用 - 1D调度，自动异步 */
 ACE_API ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,

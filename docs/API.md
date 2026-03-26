@@ -60,7 +60,7 @@ ace_error_t ace_buffer_read(ace_buffer_t buf, void* data, size_t size);
 
 ```c
 /* 注册内核（通常使用 ACE_KERNEL 宏） */
-ace_kernel_t ace_register_kernel(const char* name, const char* src);
+ace_kernel_t ace_kernel_register(const char* name, const char* src);
 
 /* 执行内核 */
 ace_error_t ace_kernel_invoke(

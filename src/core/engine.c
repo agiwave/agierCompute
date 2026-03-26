@@ -359,7 +359,7 @@ ace_error_t ace_finish(ace_device_t dev) {
  * 内核管理 - 只保存模板，编译由后端负责
  * ============================================================================ */
 
-ace_kernel_t ace_register_kernel(const char* name, const char* src) {
+ace_kernel_t ace_kernel_register(const char* name, const char* src) {
     if (g_template_count >= MAX_TEMPLATES) return NULL;
 
     /* 检查是否已注册 */

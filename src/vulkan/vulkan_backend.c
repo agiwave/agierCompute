@@ -180,9 +180,9 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
         int scalar_idx = 0;
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
-                /* 标量参数：根据数据类型决定使用 int 还是 float */
+                /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
                 char line[128];
-                const char* scalar_type = is_float_dtype(dtype) ? "float" : "int";
+                const char* scalar_type = (scalar_idx == 0) ? "int" : (is_float_dtype(dtype) ? "float" : "int");
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
                 char access[128];
@@ -747,11 +747,14 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         vkUpdateDescriptorSets(vk_dev->device, buf_idx, writes, 0, NULL);
     }
 
-    /* Push constants - 根据数据类型传递 int 或 float */
+    /* Push constants - 第一个参数 n 总是 int，后续参数根据内核类型 */
     int push_count = 0;
     for (int i = 0; i < n && push_count < k->n_scalars && push_count < 8; i++) {
         if (sizes[i] == ACE_ARG_VALUE) {
-            if (is_float_type) {
+            /* 第一个标量参数 (n) 总是 int，后续根据内核类型 */
+            if (push_count == 0) {
+                push_values[push_count].i = *(int*)args[i];
+            } else if (is_float_type) {
                 push_values[push_count].f = *(float*)args[i];
             } else {
                 push_values[push_count].i = *(int*)args[i];
@@ -789,9 +792,13 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     }
 
     if (push_count > 0) {
-        size_t push_size = is_float_type ? sizeof(float) : sizeof(int);
+        /* 计算 push constants 大小：第一个参数是 int，后续根据类型 */
+        size_t push_size = 0;
+        for (int i = 0; i < push_count; i++) {
+            push_size += (i == 0) ? sizeof(int) : (is_float_type ? sizeof(float) : sizeof(int));
+        }
         vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT,
-            0, push_count * push_size, &push_values[0]);
+            0, push_size, &push_values[0]);
     }
 
     uint32_t groups = (uint32_t)((cfg->grid[0] * cfg->block[0] + 255) / 256);
