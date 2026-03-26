@@ -56,30 +56,53 @@ typedef struct {
  * ACE -> CUDA translation
  * ============================================================================ */
 
-static char* translate_to_cuda(const char* name, const char* src, const char* type_name) {
+/* 获取 CUDA 类型名称 */
+static const char* get_cuda_type_name(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:  return "float";
+        case ACE_DTYPE_FLOAT64:  return "double";
+        case ACE_DTYPE_INT32:    return "int";
+        case ACE_DTYPE_INT64:    return "long long";
+        case ACE_DTYPE_FLOAT16:  return "half";
+        case ACE_DTYPE_BFLOAT16: return "__nv_bfloat16";
+        case ACE_DTYPE_INT8:     return "char";
+        case ACE_DTYPE_UINT8:    return "unsigned char";
+        case ACE_DTYPE_INT16:    return "short";
+        default:                 return "float";
+    }
+}
+
+/* 获取 CUDA 类型转换宏 */
+static const char* get_cuda_type_macros(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT16:
+            return
+                "#define ACE_HALF_TO_FLOAT(h) __half2float(h)\n"
+                "#define ACE_FLOAT_TO_HALF(f) __float2half(f)\n"
+                "#define ACE_HALF_ADD(a, b) __hadd(a, b)\n"
+                "#define ACE_HALF_MUL(a, b) __hmul(a, b)\n"
+                "#define ACE_HALF_SUB(a, b) __hsub(a, b)\n"
+                "#define ACE_HALF_DIV(a, b) __hdiv(a, b)\n";
+        case ACE_DTYPE_BFLOAT16:
+            return
+                "#define ACE_BFLOAT16_TO_FLOAT(b) __bfloat162float(b)\n"
+                "#define ACE_FLOAT_TO_BFLOAT16(f) __float2bfloat16(f)\n"
+                "#define ACE_BFLOAT16_ADD(a, b) __hadd(a, b)\n"
+                "#define ACE_BFLOAT16_MUL(a, b) __hmul(a, b)\n"
+                "#define ACE_BFLOAT16_SUB(a, b) __hsub(a, b)\n"
+                "#define ACE_BFLOAT16_DIV(a, b) __hdiv(a, b)\n";
+        default:
+            return "";
+    }
+}
+
+static char* translate_to_cuda(const char* name, const char* src, ace_dtype_t dtype) {
+    const char* type_name = get_cuda_type_name(dtype);
+    const char* type_macros = get_cuda_type_macros(dtype);
+    
     /* 替换 T 为实际类型 */
     char* code = strdup(src);
     if (!code) return NULL;
-
-    /* 添加 CUDA 特殊类型定义和转换宏 */
-    const char* header = NULL;
-    const char* type_convert = NULL;
-
-    if (strcmp(type_name, "half") == 0) {
-        /* CUDA 12+ 内置 half 支持，不需要头文件 */
-        type_convert = 
-            "#define ACE_HALF_TO_FLOAT(h) __half2float(h)\n"
-            "#define ACE_FLOAT_TO_HALF(f) __float2half(f)\n"
-            "#define ACE_HALF_ADD(a, b) __hadd(a, b)\n"
-            "#define ACE_HALF_MUL(a, b) __hmul(a, b)\n";
-    } else if (strcmp(type_name, "__nv_bfloat16") == 0) {
-        header = "#include <cuda_bf16.h>\n";
-        type_convert =
-            "#define ACE_BFLOAT16_TO_FLOAT(b) __bfloat162float(b)\n"
-            "#define ACE_FLOAT_TO_BFLOAT16(f) __float2bfloat16(f)\n"
-            "#define ACE_BFLOAT16_ADD(a, b) __hadd(a, b)\n"
-            "#define ACE_BFLOAT16_MUL(a, b) __hmul(a, b)\n";
-    }
 
     char* p;
     while ((p = strstr(code, "T")) != NULL) {
@@ -120,8 +143,6 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
         free(code);
         char* out = (char*)malloc(256);
         snprintf(out, 256, "extern \"C\" __global__ void %s() {}\n", name);
-        if (header) free(header);
-        if (type_convert) free(type_convert);
         return out;
     }
 
@@ -132,9 +153,16 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
 
     size_t body_len = body_end - body_start - 1;
 
-    size_t total_len = strlen(name) + params_len + body_len + 1024 + 
-                       (header ? strlen(header) : 0) + 
-                       (type_convert ? strlen(type_convert) : 0);
+    /* BF16 需要包含头文件 */
+    const char* bf16_header = "";
+    char bf16_buf[64] = "";
+    if (dtype == ACE_DTYPE_BFLOAT16) {
+        snprintf(bf16_buf, sizeof(bf16_buf), "#include <cuda_bf16.h>\n");
+        bf16_header = bf16_buf;
+    }
+
+    size_t total_len = strlen(name) + params_len + body_len + 1024 +
+                       strlen(type_macros) + strlen(bf16_header);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
@@ -147,8 +175,8 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
         "    const int BSIZE = blockDim.x;\n"
         "    %.*s\n"
         "}\n",
-        header ? header : "",
-        type_convert ? type_convert : "",
+        bf16_header,
+        type_macros,
         name, params,
         (int)body_len, body_start + 1
     );
@@ -327,21 +355,9 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     /* 如果未缓存，编译内核 */
     if (!cached) {
         /* 使用 kernel_def 中的数据类型 */
-        const char* type_name = "float";
-        switch ((ace_dtype_t)kernel_def->dtype) {
-            case ACE_DTYPE_FLOAT32:  type_name = "float"; break;
-            case ACE_DTYPE_FLOAT64:  type_name = "double"; break;
-            case ACE_DTYPE_INT32:    type_name = "int"; break;
-            case ACE_DTYPE_INT64:    type_name = "long"; break;
-            case ACE_DTYPE_FLOAT16:  type_name = "half"; break;
-            case ACE_DTYPE_BFLOAT16: type_name = "__nv_bfloat16"; break;
-            case ACE_DTYPE_INT8:     type_name = "char"; break;
-            case ACE_DTYPE_UINT8:    type_name = "unsigned char"; break;
-            case ACE_DTYPE_INT16:    type_name = "short"; break;
-            default: type_name = "float"; break;
-        }
+        ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
 
-        char* cuda_src = translate_to_cuda(kernel_def->name, kernel_def->src, type_name);
+        char* cuda_src = translate_to_cuda(kernel_def->name, kernel_def->src, dtype);
 
 #ifdef NVRTC_AVAILABLE
         nvrtcProgram prog;
@@ -353,15 +369,28 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
         char arch_opt[64];
         snprintf(arch_opt, sizeof(arch_opt), "-arch=compute_%d%d", d->compute_major, d->compute_minor);
-        const char* opts[] = { arch_opt, "-default-device" };
+        
+        /* 为 float16 添加 FP16 支持选项 */
+        const char* opts[4];
+        int opt_count = 2;
+        opts[0] = arch_opt;
+        opts[1] = "-default-device";
+        
+        if (dtype == ACE_DTYPE_FLOAT16) {
+            /* 为 FP16 启用半精度支持 */
+            if (d->compute_major >= 6) {
+                opts[opt_count++] = "-use_fast_math";
+            }
+        }
 
-        res = nvrtcCompileProgram(prog, 2, opts);
+        res = nvrtcCompileProgram(prog, opt_count, opts);
         if (res != NVRTC_SUCCESS) {
             size_t log_size;
             nvrtcGetProgramLogSize(prog, &log_size);
             char* log = (char*)malloc(log_size);
             nvrtcGetProgramLog(prog, log);
-            printf("[CUDA] Compile error for %s (%s):\n%s\n", kernel_def->name, type_name, log);
+            printf("[CUDA] Compile error for %s (%s):\n%s\n", kernel_def->name, 
+                   get_cuda_type_name(dtype), log);
             free(log);
             nvrtcDestroyProgram(&prog);
             free(cuda_src);

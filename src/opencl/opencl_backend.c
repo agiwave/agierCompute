@@ -54,16 +54,41 @@ static cl_platform_id g_platform;
  * ACE -> OpenCL translation
  * ============================================================================ */
 
-static char* translate_to_opencl(const char* name, const char* src, const char* type_name) {
+/* 获取 OpenCL 类型名称 */
+static const char* get_opencl_type_name(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:  return "float";
+        case ACE_DTYPE_FLOAT64:  return "double";
+        case ACE_DTYPE_INT32:    return "int";
+        case ACE_DTYPE_INT64:    return "long";
+        case ACE_DTYPE_FLOAT16:  return "half";
+        case ACE_DTYPE_BFLOAT16: return "ushort";  /* BF16 使用 ushort 存储 */
+        case ACE_DTYPE_INT8:     return "char";
+        case ACE_DTYPE_UINT8:    return "uchar";
+        case ACE_DTYPE_INT16:    return "short";
+        default:                 return "float";
+    }
+}
+
+/* 获取 OpenCL 扩展 pragma */
+static const char* get_opencl_extension(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT16:
+            return "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n";
+        case ACE_DTYPE_FLOAT64:
+            return "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n";
+        default:
+            return "";
+    }
+}
+
+static char* translate_to_opencl(const char* name, const char* src, ace_dtype_t dtype) {
+    const char* type_name = get_opencl_type_name(dtype);
+    const char* extension = get_opencl_extension(dtype);
+    
     /* 替换 T 为实际类型 */
     char* code = strdup(src);
     if (!code) return NULL;
-
-    /* 添加 OpenCL 特殊类型定义 */
-    const char* header = NULL;
-    if (strcmp(type_name, "half") == 0) {
-        header = "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n";
-    }
 
     char* p;
     while ((p = strstr(code, "T")) != NULL) {
@@ -101,73 +126,73 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
     if (ptr) {
         char* end = strchr(ptr, ')');
         if (end) {
-            /* 在指针类型前添加 __global */
+            /* 在指针参数前添加 __global */
             size_t prefix_len = ptr - code + 1;  /* 包括 ( */
-            size_t params_len = end - ptr - 1;
-            size_t suffix_len = strlen(end);
-            
+
             /* 分配足够的空间 */
-            with_global = malloc(strlen(code) + params_len + 50);
+            with_global = malloc(strlen(code) + 100);
             if (!with_global) { free(code); return NULL; }
-            
+
             /* 复制前缀 */
             memcpy(with_global, code, prefix_len);
             char* dst = with_global + prefix_len;
-            
-            /* 处理参数，添加 __global */
+
+            /* 处理参数，只为指针类型添加 __global */
             char* param_start = ptr + 1;
             while (param_start < end) {
                 /* 跳过空格 */
                 while (param_start < end && (*param_start == ' ' || *param_start == '\t')) param_start++;
-                
-                /* 检查是否有 * */
-                char* star = strchr(param_start, '*');
-                if (star && star < end) {
-                    /* 在 * 前添加 __global */
-                    memcpy(dst, "__global ", 9);
-                    dst += 9;
-                    
-                    /* 复制从 param_start 到 star 的内容 */
-                    memcpy(dst, param_start, star - param_start);
-                    dst += star - param_start;
-                    
-                    /* 复制 * 和后面的内容 */
-                    *dst++ = '*';
-                    param_start = star + 1;
-                    
-                    /* 跳过空格 */
-                    while (param_start < end && (*param_start == ' ' || *param_start == '\t')) param_start++;
-                    
-                    /* 复制参数名 */
-                    char* comma = strchr(param_start, ',');
-                    if (!comma || comma > end) comma = end;
-                    memcpy(dst, param_start, comma - param_start);
-                    dst += comma - param_start;
-                    param_start = comma;
-                    
-                    /* 复制逗号 */
-                    if (param_start < end && *param_start == ',') {
-                        *dst++ = ',';
-                        param_start++;
+                if (param_start >= end) break;
+
+                /* 找到逗号或右括号来确定参数结束 */
+                char* comma = NULL;
+                char* search = param_start;
+                int paren_depth = 0;
+                while (search < end) {
+                    if (*search == '(') paren_depth++;
+                    else if (*search == ')') paren_depth--;
+                    else if (*search == ',' && paren_depth == 0) {
+                        comma = search;
+                        break;
                     }
-                } else {
-                    /* 没有 *，直接复制 */
-                    char* comma = strchr(param_start, ',');
-                    if (!comma || comma > end) comma = end;
-                    memcpy(dst, param_start, comma - param_start);
-                    dst += comma - param_start;
-                    param_start = comma;
-                    
-                    if (param_start < end && *param_start == ',') {
-                        *dst++ = ',';
-                        param_start++;
+                    search++;
+                }
+                if (!comma) comma = end;
+
+                /* 检查这个参数是否是指针（查找 *） */
+                char* star = NULL;
+                for (char* s = param_start; s < comma; s++) {
+                    if (*s == '*') {
+                        star = s;
+                        break;
                     }
                 }
+
+                if (star) {
+                    /* 是指针参数，添加 __global */
+                    memcpy(dst, "__global ", 9);
+                    dst += 9;
+
+                    /* 复制整个参数（从 param_start 到 comma） */
+                    memcpy(dst, param_start, comma - param_start);
+                    dst += comma - param_start;
+                } else {
+                    /* 不是指针参数，直接复制 */
+                    memcpy(dst, param_start, comma - param_start);
+                    dst += comma - param_start;
+                }
+
+                /* 复制逗号 */
+                param_start = comma;
+                if (param_start < end && *param_start == ',') {
+                    *dst++ = ',';
+                    param_start++;
+                }
             }
-            
-            /* 复制后缀 */
+
+            /* 复制剩余部分 */
             strcpy(dst, end);
-            
+
             free(code);
             code = with_global;
         }
@@ -181,7 +206,8 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
     if (!params_start || !params_end || !body_start || !body_end) {
         free(code);
         char* out = (char*)malloc(256);
-        snprintf(out, 256, "__kernel void %s() { int GID = get_global_id(0); }\n", name);
+        snprintf(out, 256, "%s__kernel void %s() { int GID = get_global_id(0); }\n", 
+                 extension, name);
         return out;
     }
 
@@ -192,10 +218,24 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
 
     size_t body_len = body_end - body_start - 1;
 
-    size_t total_len = strlen(name) + params_len + body_len + 512 + (header ? strlen(header) : 0);
+    /* BF16 辅助宏 */
+    const char* bf16_macros = "";
+    char bf16_buf[512] = "";
+    if (dtype == ACE_DTYPE_BFLOAT16) {
+        snprintf(bf16_buf, sizeof(bf16_buf),
+            "#define BF16_TO_FLOAT(x) as_float((uint)(x) << 16)\n"
+            "#define FLOAT_TO_BF16(x) as_ushort(as_uint(x) >> 16)\n"
+            "#define BF16_ADD(a, b) FLOAT_TO_BF16(BF16_TO_FLOAT(a) + BF16_TO_FLOAT(b))\n"
+            "#define BF16_MUL(a, b) FLOAT_TO_BF16(BF16_TO_FLOAT(a) * BF16_TO_FLOAT(b))\n");
+        bf16_macros = bf16_buf;
+    }
+
+    size_t total_len = strlen(name) + params_len + body_len + 512 + 
+                       strlen(extension) + strlen(bf16_macros);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
+        "%s"
         "%s"
         "__kernel void %s%s\n"
         "{\n"
@@ -204,7 +244,8 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
         "    int BSIZE = get_local_size(0);\n"
         "    %.*s\n"
         "}\n",
-        header ? header : "",
+        extension,
+        bf16_macros,
         name, params,
         (int)body_len, body_start + 1
     );
@@ -392,21 +433,9 @@ static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     /* 如果未缓存，编译内核 */
     if (!cached) {
         /* 使用 kernel_def 中的数据类型 */
-        const char* type_name = "float";
-        switch ((ace_dtype_t)kernel_def->dtype) {
-            case ACE_DTYPE_FLOAT32:  type_name = "float"; break;
-            case ACE_DTYPE_FLOAT64:  type_name = "double"; break;
-            case ACE_DTYPE_INT32:    type_name = "int"; break;
-            case ACE_DTYPE_INT64:    type_name = "long"; break;
-            case ACE_DTYPE_FLOAT16:  type_name = "half"; break;
-            case ACE_DTYPE_BFLOAT16: type_name = "bfloat16"; break;
-            case ACE_DTYPE_INT8:     type_name = "char"; break;
-            case ACE_DTYPE_UINT8:    type_name = "uchar"; break;
-            case ACE_DTYPE_INT16:    type_name = "short"; break;
-            default: type_name = "float"; break;
-        }
+        ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
 
-        char* translated = translate_to_opencl(kernel_def->name, kernel_def->src, type_name);
+        char* translated = translate_to_opencl(kernel_def->name, kernel_def->src, dtype);
 
         cl_int err;
         const char* srcs[1] = { translated };
@@ -424,7 +453,8 @@ static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             clGetProgramBuildInfo(prog, d->device, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
             char* log = (char*)malloc(log_size);
             clGetProgramBuildInfo(prog, d->device, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
-            printf("[OpenCL] Compile error for %s (%s):\n%s\n", kernel_def->name, type_name, log);
+            printf("[OpenCL] Compile error for %s (%s):\n%s\n", kernel_def->name, 
+                   get_opencl_type_name(dtype), log);
             free(log);
             clReleaseProgram(prog);
             free(translated);

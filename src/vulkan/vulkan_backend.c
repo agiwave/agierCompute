@@ -70,15 +70,6 @@ typedef struct {
 static VkInstance g_instance = VK_NULL_HANDLE;
 static int g_initialized = 0;
 
-static vk_cached_kernel_t* find_cached_kernel(vk_device_internal_t* dev_int, const char* name) {
-    for (int i = 0; i < dev_int->kernel_count; i++) {
-        if (strcmp(dev_int->kernels[i].name, name) == 0) {
-            return &dev_int->kernels[i];
-        }
-    }
-    return NULL;
-}
-
 /* ============================================================================
  * GLSL 类型名称辅助函数
  * ============================================================================ */
@@ -93,14 +84,35 @@ static const char* get_glsl_type_name(ace_dtype_t dtype) {
         case ACE_DTYPE_UINT8:    return "uint8_t";
         case ACE_DTYPE_INT16:    return "int16_t";
         case ACE_DTYPE_FLOAT16:  return "float16_t";
-        case ACE_DTYPE_BFLOAT16: return "bfloat16_t";
+        case ACE_DTYPE_BFLOAT16: return "int16_t";  /* BF16 使用 int16_t 存储 */
         default:                 return "float";
     }
 }
 
 static int is_float_dtype(ace_dtype_t dtype) {
-    return (dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64 || 
+    return (dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64 ||
             dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16);
+}
+
+/* 检查数据类型是否需要特殊扩展 */
+static const char* get_glsl_extension(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT64:
+            return "#extension GL_ARB_gpu_shader_fp64 : require\n";
+        case ACE_DTYPE_INT64:
+            return "#extension GL_KHR_shader_storage_buffer_format : require\n";
+        case ACE_DTYPE_FLOAT16:
+            return "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
+        case ACE_DTYPE_BFLOAT16:
+            return "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
+        case ACE_DTYPE_INT8:
+        case ACE_DTYPE_UINT8:
+            return "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
+        case ACE_DTYPE_INT16:
+            return "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
+        default:
+            return "";
+    }
 }
 
 /* ============================================================================
@@ -183,7 +195,10 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
             if (!params[i].is_buffer) {
                 /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
                 char line[128];
-                const char* scalar_type = (scalar_idx == 0) ? "int" : (is_float_dtype(dtype) ? "float" : "int");
+                const char* scalar_type = (scalar_idx == 0) ? "int" : 
+                                         (dtype == ACE_DTYPE_FLOAT16 ? "float16_t" :
+                                          dtype == ACE_DTYPE_BFLOAT16 ? "int16_t" :
+                                          is_float_dtype(dtype) ? "float" : "int");
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
                 char access[128];
@@ -215,28 +230,29 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
     strncpy(body, body_start + 1, body_len);
     body[body_len] = '\0';
 
-    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access);
+    /* 获取扩展声明 */
+    const char* extensions = get_glsl_extension(dtype);
+    
+    /* BF16 类型定义 */
+    const char* type_defs = "";
+    char bf16_defs[512] = "";
+    if (dtype == ACE_DTYPE_BFLOAT16) {
+        snprintf(bf16_defs, sizeof(bf16_defs),
+            "typedef int16_t bfloat16_t;\n"
+            "float bf16_to_f32(bfloat16_t x) {\n"
+            "    return unpackFloat2x8((x << 8) | 0x0000);\n"
+            "}\n"
+            "bfloat16_t f32_to_bf16(float x) {\n"
+            "    return bfloat16_t((packFloat2x8(x) >> 8) & 0xFFFF);\n"
+            "}\n");
+        type_defs = bf16_defs;
+    } else if (dtype == ACE_DTYPE_FLOAT16) {
+        type_defs = "";  /* float16_t 是 GLSL 内置类型 */
+    }
+
+    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + strlen(type_defs);
     char* out = (char*)malloc(len);
 
-    /* 添加 GLSL 扩展和类型定义 */
-    const char* extensions = "";
-    const char* type_defs = "";
-    if (dtype == ACE_DTYPE_FLOAT64) {
-        extensions = "#extension GL_ARB_gpu_shader_fp64 : require\n";
-    } else if (dtype == ACE_DTYPE_INT64) {
-        extensions = "#extension GL_KHR_shader_subgroup_basic : require\n";
-    } else if (dtype == ACE_DTYPE_FLOAT16) {
-        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
-    } else if (dtype == ACE_DTYPE_BFLOAT16) {
-        /* BF16 使用 int16 存储，在 shader 中手动转换 */
-        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
-        type_defs = "typedef int16_t bfloat16_t;\n";
-    } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
-        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
-    } else if (dtype == ACE_DTYPE_INT16) {
-        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
-    }
-    
     snprintf(out, len,
         "#version 450\n"
         "%s"
@@ -250,8 +266,8 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
         "#define BSIZE 256\n"
         "#define BARRIER() barrier()\n"
         "void main() { %s }\n",
-        extensions, 
-        (type_defs && strlen(type_defs) > 0) ? type_defs : "",
+        extensions,
+        type_defs,
         buffers, push_constants, pc_access, body);
 
     free(body);
@@ -677,11 +693,6 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
 }
 #endif
 
-static void vk_kernel_release(void* kernel) {
-    /* Kernels are freed in vk_device_release */
-    (void)kernel;
-}
-
 static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
                                      ace_launch_config_t* cfg, void** args, size_t* sizes, int n) {
     vk_device_internal_t* d_int = (vk_device_internal_t*)dev;
@@ -716,7 +727,6 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
     /* 获取数据类型 */
     ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
-    int is_float_type = is_float_dtype(dtype);
 
     /* Find device from first buffer */
     vk_device_t* vk_dev = NULL;
@@ -764,8 +774,12 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             /* 第一个标量参数 (n) 总是 int，后续根据内核类型 */
             if (push_count == 0) {
                 push_values[push_count].i = *(int*)args[i];
-            } else if (is_float_type) {
+            } else if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64) {
+                /* float16 在 host 侧使用 float 传递，在 shader 中转换 */
                 push_values[push_count].f = *(float*)args[i];
+            } else if (dtype == ACE_DTYPE_BFLOAT16) {
+                /* bfloat16 在 host 侧使用 uint16 传递 */
+                push_values[push_count].i = *(uint16_t*)args[i];
             } else {
                 push_values[push_count].i = *(int*)args[i];
             }
@@ -777,14 +791,14 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     int cmd_idx = d_int->cmd_buffer_index;
     VkCommandBuffer cmd = d_int->cmd_buffers[cmd_idx];
     VkFence fence = d_int->fences[cmd_idx];
-    
+
     /* 等待之前的命令完成（带 1 秒超时，避免死锁） */
     VkResult result = vkWaitForFences(vk_dev->device, 1, &fence, VK_TRUE, 1000000000);
     if (result != VK_SUCCESS && result != VK_TIMEOUT) {
         return ACE_ERROR_LAUNCH;
     }
     vkResetFences(vk_dev->device, 1, &fence);
-    
+
     /* 重置命令缓冲 */
     vkResetCommandBuffer(cmd, 0);
 
@@ -805,8 +819,18 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         /* 计算 push constants 大小：第一个参数是 int，后续根据类型 */
         size_t push_size = 0;
         for (int i = 0; i < push_count; i++) {
-            push_size += (i == 0) ? sizeof(int) : (is_float_type ? sizeof(float) : sizeof(int));
+            if (i == 0) {
+                push_size += sizeof(int);  /* 第一个参数 n 总是 int */
+            } else if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64) {
+                push_size += sizeof(float);  /* float 类型 */
+            } else if (dtype == ACE_DTYPE_BFLOAT16 || dtype == ACE_DTYPE_INT16) {
+                push_size += sizeof(uint16_t);  /* 16 位类型 */
+            } else {
+                push_size += sizeof(int);  /* int 类型 */
+            }
         }
+        /* 确保 push constants 大小是 4 的倍数（Vulkan 要求） */
+        push_size = (push_size + 3) & ~3;
         vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, push_size, &push_values[0]);
     }
