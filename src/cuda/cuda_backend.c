@@ -286,10 +286,12 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     cuCtxSetCurrent(d->context);
 
     /* 查找缓存的内核 */
-    int bucket = kernel_def->id % KERNEL_CACHE_SIZE;
+    /* 内核 ID 规则：core_id * 16 + dtype，确保不同数据类型有不同缓存 */
+    int kernel_id = kernel_def->id * 16 + kernel_def->dtype;
+    int bucket = kernel_id % KERNEL_CACHE_SIZE;
     cuda_kernel_t* cached = d->kernel_cache.buckets[bucket];
     while (cached) {
-        if (cached->id == kernel_def->id) {
+        if (cached->id == kernel_id) {
             break;  /* 找到缓存 */
         }
         cached = cached->next;
@@ -341,7 +343,7 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             return ACE_ERROR_MEM;
         }
 
-        k->id = kernel_def->id;
+        k->id = kernel_id;
         k->name = strdup(kernel_def->name);
 
         if (cuModuleLoadData(&k->module, ptx) != CUDA_SUCCESS) {

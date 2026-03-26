@@ -41,6 +41,7 @@ typedef struct {
 
 /* 每设备缓存的内核 */
 typedef struct {
+    int id;                /* 内核 ID (core_id * 16 + dtype) */
     char* name;
     char* src;
     VkShaderModule shader;
@@ -421,15 +422,19 @@ static ace_error_t vk_finish(void* dev) {
  * ============================================================================ */
 
 #ifdef SHADERC_AVAILABLE
-static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* src,
+static ace_error_t vk_kernel_compile(void* dev, ace_kernel_def_t* kernel_def,
                                       void** kernel, char** err_msg) {
     vk_device_internal_t* d = (vk_device_internal_t*)dev;
 
+    /* 计算内核 ID */
+    int kernel_id = kernel_def->id * 16 + kernel_def->dtype;
+
     /* 查找缓存 */
-    vk_cached_kernel_t* cached = find_cached_kernel(d, name);
-    if (cached) {
-        *kernel = cached;
-        return ACE_OK;
+    for (int i = 0; i < d->kernel_count; i++) {
+        if (d->kernels[i].id == kernel_id) {
+            *kernel = &d->kernels[i];
+            return ACE_OK;
+        }
     }
 
     /* 编译新内核 - 使用 kernel_def 中的 dtype */
@@ -445,7 +450,7 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
     char* glsl = translate_to_glsl(kernel_def->name, kernel_def->src, dtype, &n_buffers, &n_scalars);
 
     shaderc_compilation_result_t result = shaderc_compile_into_spv(
-        g_shaderc, glsl, strlen(glsl), shaderc_compute_shader, name, "main", NULL);
+        g_shaderc, glsl, strlen(glsl), shaderc_compute_shader, kernel_def->name, "main", NULL);
 
     if (shaderc_result_get_compilation_status(result) != shaderc_compilation_status_success) {
         if (err_msg) {
@@ -560,8 +565,9 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
 
     /* 缓存内核 */
     vk_cached_kernel_t* k = &d->kernels[d->kernel_count++];
-    k->name = strdup(name);
-    k->src = strdup(src);
+    k->id = kernel_id;  /* 使用计算出的 kernel_id */
+    k->name = strdup(kernel_def->name);
+    k->src = strdup(kernel_def->src);
     k->shader = shader;
     k->pipeline = pipeline;
     k->layout = layout;
@@ -593,9 +599,11 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     if (!d_int) return ACE_ERROR_LAUNCH;
 
     /* 查找缓存的内核 */
+    /* 内核 ID 规则：core_id * 16 + dtype，确保不同数据类型有不同缓存 */
+    int kernel_id = kernel_def->id * 16 + kernel_def->dtype;
     vk_cached_kernel_t* k = NULL;
     for (int i = 0; i < d_int->kernel_count; i++) {
-        if (strcmp(d_int->kernels[i].name, kernel_def->name) == 0) {
+        if (d_int->kernels[i].id == kernel_id) {
             k = &d_int->kernels[i];
             break;
         }
@@ -606,7 +614,7 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         /* 调用编译函数 */
         void* compiled_kernel = NULL;
         char* err_msg = NULL;
-        ace_error_t err = vk_kernel_compile(dev, kernel_def->name, kernel_def->src, &compiled_kernel, &err_msg);
+        ace_error_t err = vk_kernel_compile(dev, kernel_def, &compiled_kernel, &err_msg);
         if (err != ACE_OK) {
             if (err_msg) {
                 printf("[Vulkan] Compile error: %s\n", err_msg);

@@ -325,10 +325,12 @@ static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     if (!d || !d->queue) return ACE_ERROR_LAUNCH;
 
     /* 查找缓存的内核 */
-    int bucket = kernel_def->id % KERNEL_CACHE_SIZE;
+    /* 内核 ID 规则：core_id * 16 + dtype，确保不同数据类型有不同缓存 */
+    int kernel_id = kernel_def->id * 16 + kernel_def->dtype;
+    int bucket = kernel_id % KERNEL_CACHE_SIZE;
     ocl_kernel_t* cached = d->kernel_cache.buckets[bucket];
     while (cached) {
-        if (cached->id == kernel_def->id) {
+        if (cached->id == kernel_id) {
             break;  /* 找到缓存 */
         }
         cached = cached->next;
@@ -373,7 +375,7 @@ static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
         /* 创建缓存条目 */
         ocl_kernel_t* k = (ocl_kernel_t*)calloc(1, sizeof(*k));
-        k->id = kernel_def->id;
+        k->id = kernel_id;
         k->name = strdup(kernel_def->name);
         k->kernel = krn;
         k->program = prog;
