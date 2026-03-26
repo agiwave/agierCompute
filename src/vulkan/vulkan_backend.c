@@ -60,6 +60,7 @@ typedef struct {
     vk_device_t* dev;
     vk_cached_kernel_t kernels[MAX_CACHED_KERNELS];
     int kernel_count;
+    VkCommandBuffer cached_cmd;  /* 重用的 command buffer */
 } vk_device_internal_t;
 
 static VkInstance g_instance = VK_NULL_HANDLE;
@@ -314,6 +315,7 @@ static ace_error_t vk_device_get(int idx, void** dev) {
     vkCreateCommandPool(d->dev->device, &pool_info, NULL, &d->dev->cmd_pool);
 
     d->kernel_count = 0;
+    d->cached_cmd = VK_NULL_HANDLE;  /* 初始化 cached command buffer */
 
     printf("[Vulkan] Device: %s\n", d->dev->props.deviceName);
     free(devices);
@@ -324,6 +326,11 @@ static ace_error_t vk_device_get(int idx, void** dev) {
 static void vk_device_release(void* dev) {
     vk_device_internal_t* d = (vk_device_internal_t*)dev;
     if (d) {
+        /* Free cached command buffer */
+        if (d->cached_cmd != VK_NULL_HANDLE) {
+            vkFreeCommandBuffers(d->dev->device, d->dev->cmd_pool, 1, &d->cached_cmd);
+        }
+        
         /* Free cached kernels */
         for (int i = 0; i < d->kernel_count; i++) {
             vk_cached_kernel_t* k = &d->kernels[i];
@@ -636,13 +643,17 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     }
     if (!vk_dev) return ACE_ERROR_LAUNCH;
 
-    /* Update descriptor sets */
+    /* 使用静态数组避免 malloc 开销 */
+    VkWriteDescriptorSet writes[8];
+    VkDescriptorBufferInfo buf_infos[8];
+    int push_values[8];  /* push constants 值 */
+    
+    /* 更新 descriptor sets */
     int buf_idx = 0;
     if (k->n_buffers > 0 && k->desc_set != VK_NULL_HANDLE) {
-        VkWriteDescriptorSet* writes = (VkWriteDescriptorSet*)calloc(k->n_buffers, sizeof(VkWriteDescriptorSet));
-        VkDescriptorBufferInfo* buf_infos = (VkDescriptorBufferInfo*)calloc(k->n_buffers, sizeof(VkDescriptorBufferInfo));
-
-        for (int i = 0; i < n && buf_idx < k->n_buffers; i++) {
+        memset(writes, 0, sizeof(writes));
+        
+        for (int i = 0; i < n && buf_idx < k->n_buffers && buf_idx < 8; i++) {
             if (sizes[i] == ACE_ARG_BUFFER) {
                 vk_buffer_t* buf = (vk_buffer_t*)args[i];
                 buf_infos[buf_idx].buffer = buf->buffer;
@@ -659,38 +670,33 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             }
         }
         vkUpdateDescriptorSets(vk_dev->device, buf_idx, writes, 0, NULL);
-        free(writes);
-        free(buf_infos);
     }
 
-    /* Push constants - 传递 int 值或 float 的位模式 */
-    int* scalars = NULL;
-    if (k->n_scalars > 0) {
-        scalars = (int*)calloc(k->n_scalars, sizeof(int));
-        int scalar_idx = 0;
-        for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
-            if (sizes[i] == ACE_ARG_VALUE) {
-                scalars[scalar_idx] = *(int*)args[i];
-                scalar_idx++;
-            }
+    /* Push constants */
+    int push_count = 0;
+    for (int i = 0; i < n && push_count < k->n_scalars && push_count < 8; i++) {
+        if (sizes[i] == ACE_ARG_VALUE) {
+            push_values[push_count++] = *(int*)args[i];
         }
     }
 
-    /* 使用命令池直接执行（避免分配开销） */
+    /* 使用缓存的 command buffer 或创建新的 */
+    VkCommandBuffer cmd = d_int->cached_cmd;
+    if (cmd == VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo cmd_alloc = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = vk_dev->cmd_pool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1
+        };
+        vkAllocateCommandBuffers(vk_dev->device, &cmd_alloc, &cmd);
+        d_int->cached_cmd = cmd;
+    }
+
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
     };
-    
-    /* 从命令池分配临时命令缓冲区 */
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    VkCommandBufferAllocateInfo cmd_alloc = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = vk_dev->cmd_pool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1
-    };
-    vkAllocateCommandBuffers(vk_dev->device, &cmd_alloc, &cmd);
     vkBeginCommandBuffer(cmd, &begin_info);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k->pipeline);
@@ -700,9 +706,9 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             0, 1, &k->desc_set, 0, NULL);
     }
 
-    if (k->n_scalars > 0 && scalars) {
+    if (push_count > 0) {
         vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT,
-            0, k->n_scalars * sizeof(int), scalars);
+            0, push_count * sizeof(int), push_values);
     }
 
     uint32_t groups = (uint32_t)((cfg->grid[0] * cfg->block[0] + 255) / 256);
@@ -717,9 +723,6 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     };
     vkQueueSubmit(vk_dev->queue, 1, &submit, VK_NULL_HANDLE);
     vkQueueWaitIdle(vk_dev->queue);
-
-    vkFreeCommandBuffers(vk_dev->device, vk_dev->cmd_pool, 1, &cmd);
-    free(scalars);
 
     return ACE_OK;
 }
