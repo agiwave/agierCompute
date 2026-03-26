@@ -65,9 +65,7 @@ int main() {
         ace_buffer_write(buf_a, h_a, N * sizeof(float));
         ace_buffer_write(buf_b, h_b, N * sizeof(float));
 
-        int n = N;
-
-        ace_error_t err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
         ace_finish(dev);
         ace_buffer_read(buf_c, h_c, N * sizeof(float));
 
@@ -75,7 +73,7 @@ int main() {
         for (int i = 0; i < 10; i++) {
             if (h_c[i] != h_a[i] + h_b[i]) { pass = 0; break; }
         }
-        printf("%s (err=%d)\n", pass ? "PASS" : "FAIL", err);
+        printf("%s\n", pass ? "PASS" : "FAIL");
         printf("First 10: ");
         for (int i = 0; i < 10; i++) printf("%.0f ", h_c[i]);
         printf("\n\n");
@@ -101,9 +99,7 @@ int main() {
         ace_buffer_alloc(dev, N * sizeof(float), &buf_out);
         ace_buffer_write(buf_in, h_in, N * sizeof(float));
 
-        int n = N;
-
-        ace_error_t err = ACE_INVOKE(dev, scale, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, scale, ACE_DTYPE_FLOAT32, N, &N, &alpha, buf_in, buf_out);
         ace_finish(dev);
         ace_buffer_read(buf_out, h_out, N * sizeof(float));
 
@@ -112,7 +108,7 @@ int main() {
             float expected = h_in[i] * alpha;
             if (h_out[i] != expected) { pass = 0; break; }
         }
-        printf("%s (err=%d)\n", pass ? "PASS" : "FAIL", err);
+        printf("%s\n", pass ? "PASS" : "FAIL");
         printf("First 10: ");
         for (int i = 0; i < 10; i++) printf("%.2f ", h_out[i]);
         printf("\n\n");

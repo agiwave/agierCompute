@@ -63,11 +63,9 @@ int main() {
     printf("  write b: %s\n", err == ACE_OK ? "OK" : "FAIL");
 
     printf("\nCompiling kernel...\n");
-    int n = N;
 
     printf("Launching kernel...\n");
-    err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
-    printf("  launch: %s (err=%d)\n", err == ACE_OK ? "OK" : "FAIL", err);
+    ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
 
     printf("\nSyncing...\n");
     ace_finish(dev);

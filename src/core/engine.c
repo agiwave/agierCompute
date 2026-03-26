@@ -399,6 +399,7 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
 
     /* 处理参数，找到第一个 buffer 所属的设备 */
     void* processed_args[16];
+    size_t arg_sizes[16];  /* 转换为 size_t */
     ace_device_t actual_dev = dev;
 
     if (nargs > 16) nargs = 16;
@@ -407,12 +408,14 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
             /* 缓冲区参数 */
             struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
             processed_args[i] = buf ? buf->ptr : NULL;
+            arg_sizes[i] = 0;
             if (buf && buf->dev && actual_dev == dev) {
                 actual_dev = buf->dev;
             }
         } else {
             /* 标量参数 */
             processed_args[i] = args[i];
+            arg_sizes[i] = (size_t)sizes[i];
         }
     }
 
@@ -425,7 +428,7 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
 
     /* 后端负责编译（如果需要）和执行 */
     ace_launch_config_t cfg = ace_launch_1d(n, 256);
-    ace_error_t err = actual_dev->backend->ops.kernel_launch(actual_dev->handle, &kernel_def, &cfg, processed_args, sizes, nargs);
+    ace_error_t err = actual_dev->backend->ops.kernel_launch(actual_dev->handle, &kernel_def, &cfg, processed_args, arg_sizes, nargs);
     if (err != ACE_OK) {
         printf("[ACE] kernel_launch failed: err=%d dtype=%d\n", err, dtype);
     }
@@ -445,6 +448,7 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
 
     /* 处理参数 */
     void* processed_args[16];
+    size_t arg_sizes[16];  /* 转换为 size_t */
     ace_device_t actual_dev = dev;
 
     if (nargs > 16) nargs = 16;
@@ -452,11 +456,13 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
         if (sizes[i] <= 0) {
             struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
             processed_args[i] = buf ? buf->ptr : NULL;
+            arg_sizes[i] = 0;
             if (buf && buf->dev && actual_dev == dev) {
                 actual_dev = buf->dev;
             }
         } else {
             processed_args[i] = args[i];
+            arg_sizes[i] = (size_t)sizes[i];
         }
     }
 
@@ -471,7 +477,7 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
     ace_launch_config_t default_cfg = ace_launch_1d(1, 1);
     return actual_dev->backend->ops.kernel_launch(actual_dev->handle, &kernel_def,
                                             config ? config : &default_cfg,
-                                            processed_args, sizes, nargs);
+                                            processed_args, arg_sizes, nargs);
 }
 
 /* ============================================================================

@@ -126,9 +126,9 @@ static int test_vec_add(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, ba, bb, bc};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_kernel_invoke(dev, _ace_get_my_vec_add(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
     ace_finish(dev);
     ace_buffer_read(bc, c, N * sizeof(float));
     
@@ -152,9 +152,9 @@ static int test_vec_mul(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, ba, bb, bc};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_vec_mul(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_kernel_invoke(dev, _ace_get_my_vec_mul(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
     ace_finish(dev);
     ace_buffer_read(bc, c, N * sizeof(float));
     
@@ -176,9 +176,9 @@ static int test_scale(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, &alpha, bin, bout};
-    int types[] = {ACE_VAL, ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), sizeof(float), 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_scale(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_kernel_invoke(dev, _ace_get_my_scale(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -201,9 +201,9 @@ static int test_relu(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_relu(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_relu(), ACE_DTYPE_FLOAT32, N, args, sizes, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -226,9 +226,9 @@ static int test_sigmoid(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_sigmoid(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_sigmoid(), ACE_DTYPE_FLOAT32, N, args, sizes, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -251,9 +251,9 @@ static int test_abs(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_abs(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_abs(), ACE_DTYPE_FLOAT32, N, args, sizes, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -276,9 +276,9 @@ static int test_square(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_square(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_square(), ACE_DTYPE_FLOAT32, N, args, sizes, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -297,9 +297,9 @@ static int test_fill(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, &val, bout};
-    int types[] = {ACE_VAL, ACE_VAL, ACE_BUF};
+    int sizes[] = {sizeof(int), sizeof(float), 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_fill(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_fill(), ACE_DTYPE_FLOAT32, N, args, sizes, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
@@ -321,9 +321,9 @@ static int test_copy(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, bin, bout};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0};
     
-    ace_kernel_invoke(dev, _ace_get_my_copy(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_kernel_invoke(dev, _ace_get_my_copy(), ACE_DTYPE_FLOAT32, N, args, sizes, 3);
     ace_finish(dev);
     ace_buffer_read(bout, out, N * sizeof(float));
     
