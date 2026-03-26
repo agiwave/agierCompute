@@ -313,81 +313,6 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
     } \
 } while(0)
 
-#ifndef __KARGS__
-
-    /* ACE_INVOKE: 标准宏 - 自动推断参数大小
-    * 用法：ACE_INVOKE(dev, vec_add, FLOAT32, N, &n, buf_a, buf_b, buf_c);
-    *      ACE_INVOKE(dev, scale, FLOAT32, N, &n, &alpha, buf_in, buf_out);
-    * 说明：自动推断参数大小 - 指针视为 buffer，其他根据 sizeof 推断大小
-    */
-    #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
-        do { \
-            void* _args[] = {__VA_ARGS__}; \
-            int _nargs = sizeof(_args) / sizeof(_args[0]); \
-            int _sizes[16] = {0}; \
-            for (int _i = 0; _i < _nargs && _i < 16; _i++) { \
-                _sizes[_i] = (_i == 0) ? sizeof(int) : ACE_ARG_BUFFER; \
-            } \
-            ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _sizes, _nargs); \
-        } while(0)
-
-#else//
-
-    struct KInvoker {
-        static const int MAX_INVOKE_ARGS = 20;
-        enum EInvokeArgType{
-            EBuffer,
-            EDataPointer,
-            EData  
-        };
-        int nArgs;
-        int pArgSizes[MAX_INVOKE_ARGS];
-        EInvokeArgType pArgType[MAX_INVOKE_ARGS];
-        union{
-            void* ptr;
-            uint8_t data[8];
-        }pArgs[MAX_INVOKE_ARGS];
-        template<typename T, typename... Args>
-        KInvoker(const T& first, Args... rest) : KInvoker(rest...){
-            assert(nArgs<MAX_INVOKE_ARGS);
-            assert(!(std::is_pointer_v<T>));
-            if(sizeof(T) <= 8) {
-                pArgType[nArgs] = EData;
-                *(T*)pArgs[nArgs].data = first;
-            }else{
-                pArgType[nArgs] = EDataPointer;
-                pArgs[nArgs].ptr = (void*)&first;
-            }
-            pArgSizes[nArgs++] = sizeof(T);
-        }
-        template<typename... Args>
-        KInvoker(ace_buffer_t* first, Args... rest) : KInvoker(rest...){
-            assert(nArgs<MAX_INVOKE_ARGS);
-            pArgSizes[nArgs] = 0;
-            pArgType[nArgs] = EBuffer;
-            pArgs[nArgs++].ptr = first;
-        }
-        KInvoker() : nArgs(0){};
-
-        ace_error_t invoke(ace_device_t device, ace_kernel_t kernel, ace_dtype_t dtype, size_t n) {
-            void* _args[MAX_INVOKE_ARGS];
-            for (int i = 0; i < nArgs; i++) {
-                _args[i] = (pArgType[i] == EBuffer) ? pArgs[i].ptr : (void*)pArgs[i].data;
-            }
-            return ace_kernel_invoke(device, kernel, dtype, n, _args, _pArgSizes, nArgs);
-        }
-    };
-
-
-    /* ACE_INVOKE: 标准宏 - 自动推断参数大小
-    * 用法：ACE_INVOKE(dev, vec_add, FLOAT32, N, &n, buf_a, buf_b, buf_c);
-    *      ACE_INVOKE(dev, scale, FLOAT32, N, &n, &alpha, buf_in, buf_out);
-    * 说明：自动推断参数大小 - 指针视为 buffer，其他根据 sizeof 推断大小
-    */
-    #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
-        KInvoker(__VA_ARGS__).invoke(dev, _ace_get_##kernel_name(), dtype, n)
-
-#endif//
 
 #define LID        /* 局部线程ID */
 #define BSIZE      /* 工作组大小 */
@@ -475,7 +400,77 @@ static inline const char* ace_error_string(ace_error_t err) {
 }
 
 #ifdef __cplusplus
-}
+} /* end extern "C" */
+#endif
+
+#ifdef __cplusplus
+    #include <cassert>
+    #include <type_traits>
+
+    struct KInvoker {
+        static const int MAX_INVOKE_ARGS = 20;
+        enum EInvokeArgType {
+            EBuffer,
+            EDataPointer,
+            EData
+        };
+        int nArgs;
+        int pArgSizes[MAX_INVOKE_ARGS];
+        EInvokeArgType pArgType[MAX_INVOKE_ARGS];
+        union {
+            void* ptr;
+            uint8_t data[8];
+        } pArgs[MAX_INVOKE_ARGS];
+
+        template<typename T, typename... Args>
+        KInvoker(const T& first, Args... rest) : KInvoker(rest...) {
+            assert(nArgs < MAX_INVOKE_ARGS);
+            assert(!(std::is_pointer_v<T>));
+            if (sizeof(T) <= 8) {
+                pArgType[nArgs] = EData;
+                *(T*)pArgs[nArgs].data = first;
+            } else {
+                assert(false && "Unsupported argument type: size > 8 bytes");
+                pArgType[nArgs] = EDataPointer;
+                pArgs[nArgs].ptr = (void*)&first;
+            }
+            pArgSizes[nArgs++] = sizeof(T);
+        }
+
+        template<typename... Args>
+        KInvoker(ace_buffer_t first, Args... rest) : KInvoker(rest...) {
+            assert(nArgs < MAX_INVOKE_ARGS);
+            pArgSizes[nArgs] = 0;
+            pArgType[nArgs] = EBuffer;
+            pArgs[nArgs++].ptr = first;
+        }
+
+        KInvoker() : nArgs(0) {}
+
+        ace_error_t invoke(ace_device_t device, ace_kernel_t kernel, ace_dtype_t dtype, size_t n) {
+            void* _args[MAX_INVOKE_ARGS];
+            for (int i = 0; i < nArgs; i++) {
+                _args[i] = (pArgType[i] == EBuffer) ? pArgs[i].ptr : (void*)pArgs[i].data;
+            }
+            return ace_kernel_invoke(device, kernel, dtype, n, _args, pArgSizes, nArgs);
+        }
+    };
+
+    /* ACE_INVOKE: C++ 类型安全宏 */
+    #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
+        KInvoker(__VA_ARGS__).invoke(dev, _ace_get_##kernel_name(), dtype, n)
+#else
+    /* C 语言版本 - 使用简化宏（如果没有定义 ACE_INVOKE） */
+    #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
+        do { \
+            void* _args[] = {__VA_ARGS__}; \
+            int _nargs = sizeof(_args) / sizeof(_args[0]); \
+            int _sizes[16] = {0}; \
+            for (int _i = 0; _i < _nargs && _i < 16; _i++) { \
+                _sizes[_i] = (_i == 0) ? sizeof(int) : 0; \
+            } \
+            ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _sizes, _nargs); \
+        } while(0)
 #endif
 
 #endif /* ACE_H */
