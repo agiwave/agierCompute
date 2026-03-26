@@ -140,6 +140,69 @@ static inline size_t ace_dtype_size(ace_dtype_t dtype) {
     }
 }
 
+/* 获取数据类型名称 */
+static inline const char* ace_dtype_name(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:  return "float32";
+        case ACE_DTYPE_FLOAT64:  return "float64";
+        case ACE_DTYPE_INT32:    return "int32";
+        case ACE_DTYPE_INT64:    return "int64";
+        case ACE_DTYPE_FLOAT16:  return "float16";
+        case ACE_DTYPE_BFLOAT16: return "bfloat16";
+        case ACE_DTYPE_INT8:     return "int8";
+        case ACE_DTYPE_UINT8:    return "uint8";
+        case ACE_DTYPE_INT16:    return "int16";
+        case ACE_DTYPE_BOOL:     return "bool";
+        default:                 return "float32";
+    }
+}
+
+/* ============================================================================
+ * AI 数据类型转换辅助函数
+ * ============================================================================ */
+
+/* FP16 (float16) 转换辅助函数 */
+typedef uint16_t ace_float16_t;
+
+static inline ace_float16_t float_to_float16(float f) {
+    union { float f; uint32_t u; } u = {f};
+    uint32_t sign = (u.u >> 16) & 0x8000;
+    int32_t exp = ((u.u >> 23) & 0xff) - 127 + 15;
+    uint32_t frac = (u.u >> 13) & 0x3ff;
+
+    if (exp <= 0) return (ace_float16_t)sign;
+    if (exp >= 31) return (ace_float16_t)(sign | 0x7c00);
+    return (ace_float16_t)(sign | (exp << 10) | frac);
+}
+
+static inline float float16_to_float(ace_float16_t h) {
+    uint32_t sign = (h & 0x8000) << 16;
+    uint32_t exp = ((h & 0x7c00) >> 10);
+    uint32_t frac = (h & 0x03ff) << 13;
+
+    if (exp == 0) exp = 0;
+    else if (exp == 31) exp = 255;
+    else exp += 127 - 15;
+
+    union { float f; uint32_t u; } u;
+    u.u = sign | (exp << 23) | frac;
+    return u.f;
+}
+
+/* BF16 (bfloat16) 转换辅助函数 */
+typedef uint16_t ace_bfloat16_t;
+
+static inline ace_bfloat16_t float_to_bfloat16(float f) {
+    union { float f; uint32_t u; } u = {f};
+    return (ace_bfloat16_t)(u.u >> 16);
+}
+
+static inline float bfloat16_to_float(ace_bfloat16_t h) {
+    union { float f; uint32_t u; } u;
+    u.u = (uint32_t)h << 16;
+    return u.f;
+}
+
 /* ============================================================================
  * 设备属性
  * ============================================================================ */
@@ -335,66 +398,6 @@ ACE_API ace_error_t ace_finish(ace_device_t dev);
 /* ============================================================================
  * 辅助函数
  * ============================================================================ */
-
-/* 获取数据类型名称 */
-static inline const char* ace_dtype_name(ace_dtype_t dtype) {
-    static const char* names[] = {
-        "float",    /* FLOAT32 */
-        "double",   /* FLOAT64 */
-        "int",      /* INT32 */
-        "long",     /* INT64 */
-        "half",     /* FLOAT16 */
-        "bfloat16", /* BFLOAT16 */
-        "char",     /* INT8 */
-        "uchar",    /* UINT8 */
-        "short",    /* INT16 */
-        "bool"      /* BOOL */
-    };
-    if (dtype >= 0 && dtype <= 9) return names[dtype];
-    return "float";
-}
-
-/* FP16 (float16) 转换辅助函数 */
-typedef uint16_t ace_float16_t;
-
-static inline ace_float16_t float_to_float16(float f) {
-    union { float f; uint32_t u; } u = {f};
-    uint32_t sign = (u.u >> 16) & 0x8000;
-    int32_t exp = ((u.u >> 23) & 0xff) - 127 + 15;
-    uint32_t frac = (u.u >> 13) & 0x3ff;
-    
-    if (exp <= 0) return (ace_float16_t)sign;
-    if (exp >= 31) return (ace_float16_t)(sign | 0x7c00);
-    return (ace_float16_t)(sign | (exp << 10) | frac);
-}
-
-static inline float float16_to_float(ace_float16_t h) {
-    uint32_t sign = (h & 0x8000) << 16;
-    uint32_t exp = ((h & 0x7c00) >> 10);
-    uint32_t frac = (h & 0x03ff) << 13;
-    
-    if (exp == 0) exp = 0;
-    else if (exp == 31) exp = 255;
-    else exp += 127 - 15;
-    
-    union { float f; uint32_t u; } u;
-    u.u = sign | (exp << 23) | frac;
-    return u.f;
-}
-
-/* BF16 (bfloat16) 转换辅助函数 */
-typedef uint16_t ace_bfloat16_t;
-
-static inline ace_bfloat16_t float_to_bfloat16(float f) {
-    union { float f; uint32_t u; } u = {f};
-    return (ace_bfloat16_t)(u.u >> 16);
-}
-
-static inline float bfloat16_to_float(ace_bfloat16_t h) {
-    union { float f; uint32_t u; } u;
-    u.u = (uint32_t)h << 16;
-    return u.f;
-}
 
 /* 获取错误描述 */
 static inline const char* ace_error_string(ace_error_t err) {

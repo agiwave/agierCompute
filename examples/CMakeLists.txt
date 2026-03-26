@@ -32,6 +32,11 @@ add_executable(test_dtypes test_dtypes.c)
 target_include_directories(test_dtypes PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_dtypes PRIVATE ace_core m)
 
+# 6b. AI 数据类型测试 (FLOAT16/BFLOAT16/INT8 等)
+add_executable(test_ai_dtypes test_ai_dtypes.c)
+target_include_directories(test_ai_dtypes PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_ai_dtypes PRIVATE ace_core m)
+
 # 7. 用户自定义内核示例
 add_executable(example_user_kernels user_kernels.c)
 target_include_directories(example_user_kernels PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -98,6 +103,13 @@ set_tests_properties(All_Kernels PROPERTIES
 add_test(NAME Data_Types COMMAND test_dtypes)
 set_tests_properties(Data_Types PROPERTIES
     LABELS "All;DataTypes;Functionality"
+    TIMEOUT 300
+)
+
+# AI 数据类型测试
+add_test(NAME AI_Data_Types COMMAND test_ai_dtypes)
+set_tests_properties(AI_Data_Types PROPERTIES
+    LABELS "All;DataTypes;Functionality;AI"
     TIMEOUT 300
 )
 

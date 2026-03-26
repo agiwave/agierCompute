@@ -93,6 +93,7 @@ static const char* get_glsl_type_name(ace_dtype_t dtype) {
         case ACE_DTYPE_UINT8:    return "uint8_t";
         case ACE_DTYPE_INT16:    return "int16_t";
         case ACE_DTYPE_FLOAT16:  return "float16_t";
+        case ACE_DTYPE_BFLOAT16: return "bfloat16_t";
         default:                 return "float";
     }
 }
@@ -226,6 +227,13 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
         extensions = "#extension GL_KHR_shader_subgroup_basic : require\n";
     } else if (dtype == ACE_DTYPE_FLOAT16) {
         extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
+    } else if (dtype == ACE_DTYPE_BFLOAT16) {
+        /* BF16 使用 int16 存储，手动转换 */
+        type_defs = "typedef int16_t bfloat16_t;\n";
+    } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
+        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
+    } else if (dtype == ACE_DTYPE_INT16) {
+        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
     }
     
     snprintf(out, len,

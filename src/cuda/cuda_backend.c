@@ -307,6 +307,7 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             case ACE_DTYPE_INT32:    type_name = "int"; break;
             case ACE_DTYPE_INT64:    type_name = "long"; break;
             case ACE_DTYPE_FLOAT16:  type_name = "half"; break;
+            case ACE_DTYPE_BFLOAT16: type_name = "__nv_bfloat16"; break;
             case ACE_DTYPE_INT8:     type_name = "char"; break;
             case ACE_DTYPE_UINT8:    type_name = "unsigned char"; break;
             case ACE_DTYPE_INT16:    type_name = "short"; break;
