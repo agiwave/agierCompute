@@ -208,19 +208,19 @@ int main() {
     printf("========================================\n");
     fflush(stdout);
 
-    /* 获取 CUDA 设备 */
+    /* 获取 Vulkan 设备（优先使用，因为更稳定） */
     int count = 0;
-    ace_device_count(ACE_DEVICE_CUDA, &count);
-    printf("CUDA devices: %d\n", count);
+    ace_device_count(ACE_DEVICE_VULKAN, &count);
+    printf("Vulkan devices: %d\n", count);
 
     if (count > 0) {
         ace_device_t dev = NULL;
-        ace_error_t err = ace_device_get(ACE_DEVICE_CUDA, 0, &dev);
+        ace_error_t err = ace_device_get(ACE_DEVICE_VULKAN, 0, &dev);
 
         if (err == ACE_OK && dev) {
             ace_device_props_t props;
             ace_device_props(dev, &props);
-            printf("Using: %s (%d threads)\n", props.name, props.compute_units);
+            printf("Using: %s\n", props.name);
 
             /* 运行所有测试 */
             test_vec_mul(dev);

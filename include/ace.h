@@ -329,6 +329,46 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
         ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _sizes, _nargs); \
     } while(0)
 
+
+#ifdef __KARGS__
+struct KInvokeArgs {
+    static const int MAX_INVOKE_ARGS = 20;
+    enum EInvokeArgType{
+        EBuffer,
+        EDataPointer,
+        EData  
+    };
+    int nArgs;
+    int pArgSizes[MAX_INVOKE_ARGS];
+    EInvokeArgType pArgType[MAX_INVOKE_ARGS];
+    union{
+        void* ptr;
+        uint8_t data[8];
+    }pArgs[MAX_INVOKE_ARGS];
+    template<typename T, typename... Args>
+    KInvokeArgs(const T& first, Args... rest) : KInvokeArgs(rest...){
+        assert(nArgs<MAX_INVOKE_ARGS);
+        assert(!(std::is_pointer_v<T>));
+        if(sizeof(T) <= 8) {
+            pArgType[nArgs] = EData;
+            *(T*)pArgs[nArgs].data = first;
+        }else{
+            pArgType[nArgs] = EDataPointer;
+            pArgs[nArgs].ptr = (void*)&first;
+        }
+        pArgSizes[nArgs++] = sizeof(T);
+    }
+    template<typename... Args>
+    KInvokeArgs(ace_buffer_t* first, Args... rest) : KInvokeArgs(rest...){
+        assert(nArgs<MAX_INVOKE_ARGS);
+        pArgSizes[nArgs] = sizeof(ace_buffer_t*);
+        pArgType[nArgs] = EBuffer;
+        pArgs[nArgs++].ptr = first;
+    }
+    KInvokeArgs() : nArgs(0){};
+};
+#endif//
+
 #define LID        /* 局部线程ID */
 #define BSIZE      /* 工作组大小 */
 #define BARRIER()  /* 局部同步 */
