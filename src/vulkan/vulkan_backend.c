@@ -55,7 +55,7 @@ typedef struct {
 } vk_cached_kernel_t;
 
 #define MAX_CACHED_KERNELS 64
-#define MAX_CMD_BUFFERS 4  /* 命令缓冲池大小 */
+#define MAX_CMD_BUFFERS 16  /* 命令缓冲池大小 - 增加以支持批处理 */
 
 typedef struct {
     vk_device_t* dev;
@@ -717,8 +717,11 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     VkCommandBuffer cmd = d_int->cmd_buffers[cmd_idx];
     VkFence fence = d_int->fences[cmd_idx];
     
-    /* 等待之前的命令完成 */
-    vkWaitForFences(vk_dev->device, 1, &fence, VK_TRUE, UINT64_MAX);
+    /* 等待之前的命令完成（带 1 秒超时，避免死锁） */
+    VkResult result = vkWaitForFences(vk_dev->device, 1, &fence, VK_TRUE, 1000000000);
+    if (result != VK_SUCCESS && result != VK_TIMEOUT) {
+        return ACE_ERROR_LAUNCH;
+    }
     vkResetFences(vk_dev->device, 1, &fence);
     
     /* 重置命令缓冲 */
