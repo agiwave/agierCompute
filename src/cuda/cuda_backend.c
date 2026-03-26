@@ -60,7 +60,15 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
     /* 替换 T 为实际类型 */
     char* code = strdup(src);
     if (!code) return NULL;
-    
+
+    /* 添加 CUDA 特殊类型定义 */
+    char* header = NULL;
+    if (strcmp(type_name, "half") == 0) {
+        header = "#include <cuda_fp16.h>\n";
+    } else if (strcmp(type_name, "__nv_bfloat16") == 0) {
+        header = "#include <cuda_bf16.h>\n";
+    }
+
     char* p;
     while ((p = strstr(code, "T")) != NULL) {
         int is_type = 1;
@@ -74,13 +82,12 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
             if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
                 (next >= '0' && next <= '9') || next == '_') is_type = 0;
         }
-        
+
         if (is_type) {
-            size_t rest_len = strlen(p + 1);
             size_t type_len = strlen(type_name);
-            char* new_code = malloc(strlen(code) + type_len);
+            char* new_code = malloc(strlen(code) + type_len + 1);
             if (!new_code) { free(code); return NULL; }
-            
+
             *p = '\0';
             strcpy(new_code, code);
             strcat(new_code, type_name);
@@ -91,7 +98,7 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
             p++;
         }
     }
-    
+
     const char* params_start = strchr(code, '(');
     const char* params_end = strchr(code, ')');
     const char* body_start = strchr(code, '{');
@@ -111,10 +118,11 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
 
     size_t body_len = body_end - body_start - 1;
 
-    size_t total_len = strlen(name) + params_len + body_len + 512;
+    size_t total_len = strlen(name) + params_len + body_len + 512 + (header ? strlen(header) : 0);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
+        "%s"
         "extern \"C\" __global__ void %s%s\n"
         "{\n"
         "    const int GID = blockIdx.x * blockDim.x + threadIdx.x;\n"
@@ -122,12 +130,14 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
         "    const int BSIZE = blockDim.x;\n"
         "    %.*s\n"
         "}\n",
+        header ? header : "",
         name, params,
         (int)body_len, body_start + 1
     );
 
     free(params);
     free(code);
+    if (header) free(header);
     return out;
 }
 

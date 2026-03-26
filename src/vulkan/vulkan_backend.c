@@ -228,7 +228,8 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
     } else if (dtype == ACE_DTYPE_FLOAT16) {
         extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
     } else if (dtype == ACE_DTYPE_BFLOAT16) {
-        /* BF16 使用 int16 存储，手动转换 */
+        /* BF16 使用 int16 存储，在 shader 中手动转换 */
+        extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
         type_defs = "typedef int16_t bfloat16_t;\n";
     } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
         extensions = "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
@@ -249,7 +250,8 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
         "#define BSIZE 256\n"
         "#define BARRIER() barrier()\n"
         "void main() { %s }\n",
-        extensions, type_defs,
+        extensions, 
+        (type_defs && strlen(type_defs) > 0) ? type_defs : "",
         buffers, push_constants, pc_access, body);
 
     free(body);
