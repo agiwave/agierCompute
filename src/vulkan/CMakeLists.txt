@@ -2,27 +2,22 @@
 # AgierCompute Vulkan Backend
 # =============================================================================
 
-# 设置 Vulkan SDK 路径（Windows 常见安装位置）
-if(WIN32)
-    set(VULKAN_SDK_PATHS
-        "C:/Apps/VulkanSDK"
-        "C:/VulkanSDK"
-        "$ENV{VULKAN_SDK}"
-    )
-endif()
-
 find_package(Vulkan QUIET)
 
 if(Vulkan_FOUND)
     add_library(ace_be_vulkan SHARED
         vulkan_backend.c
+        vulkan_device.c
+        vulkan_memory.c
+        vulkan_kernel.c
+        vulkan_type_utils.c
     )
 
     target_include_directories(ace_be_vulkan
         PRIVATE
-            ${Vulkan_INCLUDE_DIRS}
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/src
+            ${Vulkan_INCLUDE_DIRS}
     )
 
     target_compile_definitions(ace_be_vulkan PRIVATE
@@ -30,29 +25,24 @@ if(Vulkan_FOUND)
         VULKAN_AVAILABLE=1
     )
 
-    # 查找 shaderc 库用于 SPIR-V 编译
-    find_library(SHADERC_SHARED_LIB NAMES shaderc_shared shaderc_combined shaderc
+    # 查找 shaderc
+    find_library(SHADERC_LIB shaderc_shared
         HINTS
-            ${VULKAN_SDK_PATHS}
-            "${Vulkan_INCLUDE_DIRS}/.."
-            "${Vulkan_INCLUDE_DIRS}/../Lib"
-            "C:/Apps/VulkanSDK/Lib"
-            "C:/VulkanSDK/Lib"
-            /lib/x86_64-linux-gnu
-            /usr/lib/x86_64-linux-gnu
+            /usr/lib
             /usr/local/lib
+            "C:/VulkanSDK/*/Lib"
     )
 
-    if(SHADERC_SHARED_LIB)
+    if(SHADERC_LIB)
         target_compile_definitions(ace_be_vulkan PRIVATE SHADERC_AVAILABLE=1)
-        target_link_libraries(ace_be_vulkan PRIVATE ${SHADERC_SHARED_LIB})
-        message(STATUS "  Shaderc library found: ${SHADERC_SHARED_LIB}")
+        target_link_libraries(ace_be_vulkan PRIVATE ${SHADERC_LIB})
+        message(STATUS "shaderc found - Vulkan backend will support SPIR-V compilation")
     else()
-        message(STATUS "  Shaderc library not found - Vulkan will work but cannot compile kernels at runtime")
+        message(STATUS "shaderc not found - Vulkan backend will work but cannot compile shaders")
     endif()
 
     target_link_libraries(ace_be_vulkan PRIVATE
-        ${Vulkan_LIBRARIES}
+        Vulkan::Vulkan
         ace_core
     )
 

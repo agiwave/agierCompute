@@ -1,28 +1,31 @@
 # =============================================================================
-# AgierCompute Core Library
+# AgierCompute Core Engine
 # =============================================================================
 
 add_library(ace_core SHARED
-    engine.c
+    engine_backend.c
+    engine_device.c
+    engine_memory.c
+    engine_kernel.c
 )
 
 target_include_directories(ace_core
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+        $<INSTALL_INTERFACE:include>
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_compile_definitions(ace_core PRIVATE ACE_CORE_EXPORTS)
+target_compile_definitions(ace_core PRIVATE
+    ACE_CORE_EXPORTS
+)
 
 # 链接系统库
 if(UNIX)
-    target_link_libraries(ace_core PRIVATE dl m)
+    target_link_libraries(ace_core PRIVATE m)
 endif()
 
-# 设置属性
 set_target_properties(ace_core PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}

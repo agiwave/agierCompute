@@ -10,6 +10,10 @@ if(CMAKE_CUDA_COMPILER)
 
     add_library(ace_be_cuda SHARED
         cuda_backend.c
+        cuda_device.c
+        cuda_memory.c
+        cuda_kernel.c
+        cuda_type_utils.c
     )
 
     target_include_directories(ace_be_cuda
@@ -18,7 +22,7 @@ if(CMAKE_CUDA_COMPILER)
             ${PROJECT_SOURCE_DIR}/src
     )
 
-    target_compile_definitions(ace_be_cuda PRIVATE 
+    target_compile_definitions(ace_be_cuda PRIVATE
         ACE_BACKEND_EXPORTS
         CUDA_AVAILABLE=1
     )
@@ -47,7 +51,7 @@ if(CMAKE_CUDA_COMPILER)
 
     # 链接 CUDA driver API
     if(WIN32)
-        find_library(CUDA_DRIVER_LIB cuda 
+        find_library(CUDA_DRIVER_LIB cuda
             PATHS
                 "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/*/lib/x64"
                 "C:/Program Files/NVIDIA Corporation/CUDA/*/lib/x64"

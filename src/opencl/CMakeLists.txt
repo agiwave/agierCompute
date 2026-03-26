@@ -2,21 +2,28 @@
 # AgierCompute OpenCL Backend
 # =============================================================================
 
+include(CheckLanguage)
+check_language(OpenCL)
+
 find_package(OpenCL QUIET)
 
 if(OpenCL_FOUND)
     add_library(ace_be_opencl SHARED
         opencl_backend.c
+        opencl_device.c
+        opencl_memory.c
+        opencl_kernel.c
+        opencl_type_utils.c
     )
 
     target_include_directories(ace_be_opencl
         PRIVATE
-            ${OpenCL_INCLUDE_DIRS}
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/src
+            ${OpenCL_INCLUDE_DIRS}
     )
 
-    target_compile_definitions(ace_be_opencl PRIVATE 
+    target_compile_definitions(ace_be_opencl PRIVATE
         ACE_BACKEND_EXPORTS
         OPENCL_AVAILABLE=1
     )
@@ -41,6 +48,6 @@ if(OpenCL_FOUND)
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 else()
-    message(STATUS "OpenCL SDK not found - OpenCL backend disabled")
+    message(STATUS "OpenCL not found - OpenCL backend disabled")
     add_library(ace_be_opencl INTERFACE)
 endif()
