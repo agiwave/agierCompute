@@ -426,7 +426,11 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
 
     /* 后端负责编译（如果需要）和执行 */
     ace_launch_config_t cfg = ace_launch_1d(n, 256);
-    return actual_dev->backend->ops.kernel_launch(actual_dev->handle, &kernel_def, &cfg, processed_args, sizes, nargs);
+    ace_error_t err = actual_dev->backend->ops.kernel_launch(actual_dev->handle, &kernel_def, &cfg, processed_args, sizes, nargs);
+    if (err != ACE_OK) {
+        printf("[ACE] kernel_launch failed: err=%d dtype=%d\n", err, dtype);
+    }
+    return err;
 }
 
 ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,

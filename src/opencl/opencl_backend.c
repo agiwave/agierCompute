@@ -95,6 +95,84 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
         }
     }
 
+    /* 添加 __global 到指针参数 */
+    char* with_global = NULL;
+    char* ptr = strstr(code, "(");
+    if (ptr) {
+        char* end = strchr(ptr, ')');
+        if (end) {
+            /* 在指针类型前添加 __global */
+            size_t prefix_len = ptr - code + 1;  /* 包括 ( */
+            size_t params_len = end - ptr - 1;
+            size_t suffix_len = strlen(end);
+            
+            /* 分配足够的空间 */
+            with_global = malloc(strlen(code) + params_len + 50);
+            if (!with_global) { free(code); return NULL; }
+            
+            /* 复制前缀 */
+            memcpy(with_global, code, prefix_len);
+            char* dst = with_global + prefix_len;
+            
+            /* 处理参数，添加 __global */
+            char* param_start = ptr + 1;
+            while (param_start < end) {
+                /* 跳过空格 */
+                while (param_start < end && (*param_start == ' ' || *param_start == '\t')) param_start++;
+                
+                /* 检查是否有 * */
+                char* star = strchr(param_start, '*');
+                if (star && star < end) {
+                    /* 在 * 前添加 __global */
+                    memcpy(dst, "__global ", 9);
+                    dst += 9;
+                    
+                    /* 复制从 param_start 到 star 的内容 */
+                    memcpy(dst, param_start, star - param_start);
+                    dst += star - param_start;
+                    
+                    /* 复制 * 和后面的内容 */
+                    *dst++ = '*';
+                    param_start = star + 1;
+                    
+                    /* 跳过空格 */
+                    while (param_start < end && (*param_start == ' ' || *param_start == '\t')) param_start++;
+                    
+                    /* 复制参数名 */
+                    char* comma = strchr(param_start, ',');
+                    if (!comma || comma > end) comma = end;
+                    memcpy(dst, param_start, comma - param_start);
+                    dst += comma - param_start;
+                    param_start = comma;
+                    
+                    /* 复制逗号 */
+                    if (param_start < end && *param_start == ',') {
+                        *dst++ = ',';
+                        param_start++;
+                    }
+                } else {
+                    /* 没有 *，直接复制 */
+                    char* comma = strchr(param_start, ',');
+                    if (!comma || comma > end) comma = end;
+                    memcpy(dst, param_start, comma - param_start);
+                    dst += comma - param_start;
+                    param_start = comma;
+                    
+                    if (param_start < end && *param_start == ',') {
+                        *dst++ = ',';
+                        param_start++;
+                    }
+                }
+            }
+            
+            /* 复制后缀 */
+            strcpy(dst, end);
+            
+            free(code);
+            code = with_global;
+        }
+    }
+
     const char* params_start = strchr(code, '(');
     const char* params_end = strchr(code, ')');
     const char* body_start = strchr(code, '{');
@@ -102,7 +180,6 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
 
     if (!params_start || !params_end || !body_start || !body_end) {
         free(code);
-        if (header) free(header);
         char* out = (char*)malloc(256);
         snprintf(out, 256, "__kernel void %s() { int GID = get_global_id(0); }\n", name);
         return out;
@@ -343,6 +420,12 @@ static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
         err = clBuildProgram(prog, 1, &d->device, NULL, NULL, NULL);
         if (err != CL_SUCCESS) {
+            size_t log_size;
+            clGetProgramBuildInfo(prog, d->device, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+            char* log = (char*)malloc(log_size);
+            clGetProgramBuildInfo(prog, d->device, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+            printf("[OpenCL] Compile error for %s (%s):\n%s\n", kernel_def->name, type_name, log);
+            free(log);
             clReleaseProgram(prog);
             free(translated);
             return ACE_ERROR_COMPILE;

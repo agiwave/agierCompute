@@ -66,8 +66,7 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
     const char* type_convert = NULL;
 
     if (strcmp(type_name, "half") == 0) {
-        header = "#include <cuda_fp16.h>\n";
-        /* 为 half 类型添加转换宏 */
+        /* CUDA 12+ 内置 half 支持，不需要头文件 */
         type_convert = 
             "#define ACE_HALF_TO_FLOAT(h) __half2float(h)\n"
             "#define ACE_FLOAT_TO_HALF(f) __float2half(f)\n"
@@ -358,6 +357,12 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
         res = nvrtcCompileProgram(prog, 2, opts);
         if (res != NVRTC_SUCCESS) {
+            size_t log_size;
+            nvrtcGetProgramLogSize(prog, &log_size);
+            char* log = (char*)malloc(log_size);
+            nvrtcGetProgramLog(prog, log);
+            printf("[CUDA] Compile error for %s (%s):\n%s\n", kernel_def->name, type_name, log);
+            free(log);
             nvrtcDestroyProgram(&prog);
             free(cuda_src);
             return ACE_ERROR_COMPILE;

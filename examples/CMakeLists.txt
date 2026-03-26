@@ -37,6 +37,11 @@ add_executable(test_ai_dtypes test_ai_dtypes.c)
 target_include_directories(test_ai_dtypes PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_ai_dtypes PRIVATE ace_core m)
 
+# 6c. 数据类型调试测试
+add_executable(test_dtype_debug test_dtype_debug.c)
+target_include_directories(test_dtype_debug PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_dtype_debug PRIVATE ace_core m)
+
 # 7. 用户自定义内核示例
 add_executable(example_user_kernels user_kernels.c)
 target_include_directories(example_user_kernels PRIVATE ${PROJECT_SOURCE_DIR}/include)
