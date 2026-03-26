@@ -65,32 +65,56 @@ static const char* get_cuda_type_name(ace_dtype_t dtype) {
         case ACE_DTYPE_INT64:    return "long long";
         case ACE_DTYPE_FLOAT16:  return "half";
         case ACE_DTYPE_BFLOAT16: return "__nv_bfloat16";
-        case ACE_DTYPE_INT8:     return "char";
+        case ACE_DTYPE_INT8:     return "signed char";
         case ACE_DTYPE_UINT8:    return "unsigned char";
         case ACE_DTYPE_INT16:    return "short";
         default:                 return "float";
     }
 }
 
-/* 获取 CUDA 类型转换宏 */
+/* 获取 CUDA 类型相关的头文件和宏 */
+static const char* get_cuda_type_headers(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT16:
+            /* NVRTC 内置 half 类型支持，但需要包含 cuda_fp16.h */
+            return "#include <cuda_fp16.h>\n";
+        case ACE_DTYPE_BFLOAT16:
+            /* BF16 需要 CUDA 11+ 和 cuda_bf16.h */
+            return "#include <cuda_bf16.h>\n";
+        default:
+            return "";
+    }
+}
+
+/* 获取 CUDA 类型转换宏 - 用于内核代码中的运算 */
 static const char* get_cuda_type_macros(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT16:
             return
-                "#define ACE_HALF_TO_FLOAT(h) __half2float(h)\n"
-                "#define ACE_FLOAT_TO_HALF(f) __float2half(f)\n"
+                "/* FP16 辅助宏 */\n"
                 "#define ACE_HALF_ADD(a, b) __hadd(a, b)\n"
                 "#define ACE_HALF_MUL(a, b) __hmul(a, b)\n"
                 "#define ACE_HALF_SUB(a, b) __hsub(a, b)\n"
-                "#define ACE_HALF_DIV(a, b) __hdiv(a, b)\n";
+                "#define ACE_HALF_DIV(a, b) __hdiv(a, b)\n"
+                "#define ACE_HALF_EQ(a, b) __heq(a, b)\n"
+                "#define ACE_HALF_NE(a, b) __hne(a, b)\n"
+                "#define ACE_HALF_LT(a, b) __hlt(a, b)\n"
+                "#define ACE_HALF_LE(a, b) __hle(a, b)\n"
+                "#define ACE_HALF_GT(a, b) __hgt(a, b)\n"
+                "#define ACE_HALF_GE(a, b) __hge(a, b)\n";
         case ACE_DTYPE_BFLOAT16:
             return
-                "#define ACE_BFLOAT16_TO_FLOAT(b) __bfloat162float(b)\n"
-                "#define ACE_FLOAT_TO_BFLOAT16(f) __float2bfloat16(f)\n"
+                "/* BF16 辅助宏 */\n"
                 "#define ACE_BFLOAT16_ADD(a, b) __hadd(a, b)\n"
                 "#define ACE_BFLOAT16_MUL(a, b) __hmul(a, b)\n"
                 "#define ACE_BFLOAT16_SUB(a, b) __hsub(a, b)\n"
-                "#define ACE_BFLOAT16_DIV(a, b) __hdiv(a, b)\n";
+                "#define ACE_BFLOAT16_DIV(a, b) __hdiv(a, b)\n"
+                "#define ACE_BFLOAT16_EQ(a, b) __heq(a, b)\n"
+                "#define ACE_BFLOAT16_NE(a, b) __hne(a, b)\n"
+                "#define ACE_BFLOAT16_LT(a, b) __hlt(a, b)\n"
+                "#define ACE_BFLOAT16_LE(a, b) __hle(a, b)\n"
+                "#define ACE_BFLOAT16_GT(a, b) __hgt(a, b)\n"
+                "#define ACE_BFLOAT16_GE(a, b) __hge(a, b)\n";
         default:
             return "";
     }
@@ -98,8 +122,9 @@ static const char* get_cuda_type_macros(ace_dtype_t dtype) {
 
 static char* translate_to_cuda(const char* name, const char* src, ace_dtype_t dtype) {
     const char* type_name = get_cuda_type_name(dtype);
+    const char* type_headers = get_cuda_type_headers(dtype);
     const char* type_macros = get_cuda_type_macros(dtype);
-    
+
     /* 替换 T 为实际类型 */
     char* code = strdup(src);
     if (!code) return NULL;
@@ -153,19 +178,38 @@ static char* translate_to_cuda(const char* name, const char* src, ace_dtype_t dt
 
     size_t body_len = body_end - body_start - 1;
 
-    /* BF16 需要包含头文件 */
-    const char* bf16_header = "";
-    char bf16_buf[64] = "";
-    if (dtype == ACE_DTYPE_BFLOAT16) {
-        snprintf(bf16_buf, sizeof(bf16_buf), "#include <cuda_bf16.h>\n");
-        bf16_header = bf16_buf;
+    /* 为 FP16/BF16 添加类型定义和辅助函数
+     * 使用 __half_raw 避免 C++ 类的隐式转换歧义
+     */
+    const char* type_helpers = "";
+    char helpers_buf[1024] = "";
+    if (dtype == ACE_DTYPE_FLOAT16) {
+        snprintf(helpers_buf, sizeof(helpers_buf),
+            "/* FP16 类型辅助函数 */\n"
+            "typedef __half_raw half_raw;\n"
+            "__device__ inline half f32_to_f16(float f) { return __float2half(f); }\n"
+            "__device__ inline float f16_to_f32(half h) { return __half2float(h); }\n"
+            "__device__ inline half f16_add(half a, half b) { return __hadd(a, b); }\n"
+            "__device__ inline half f16_mul(half a, half b) { return __hmul(a, b); }\n");
+        type_helpers = helpers_buf;
+    } else if (dtype == ACE_DTYPE_BFLOAT16) {
+        snprintf(helpers_buf, sizeof(helpers_buf),
+            "/* BF16 类型辅助函数 */\n"
+            "typedef __nv_bfloat16_raw bfloat16_raw;\n"
+            "__device__ inline __nv_bfloat16 f32_to_bf16(float f) { return __float2bfloat16(f); }\n"
+            "__device__ inline float bf16_to_f32(__nv_bfloat16 h) { return __bfloat162float(h); }\n"
+            "__device__ inline __nv_bfloat16 bf16_add(__nv_bfloat16 a, __nv_bfloat16 b) { return __hadd(a, b); }\n"
+            "__device__ inline __nv_bfloat16 bf16_mul(__nv_bfloat16 a, __nv_bfloat16 b) { return __hmul(a, b); }\n");
+        type_helpers = helpers_buf;
     }
 
     size_t total_len = strlen(name) + params_len + body_len + 1024 +
-                       strlen(type_macros) + strlen(bf16_header);
+                       strlen(type_headers) + strlen(type_macros) + strlen(type_helpers);
     char* out = (char*)malloc(total_len);
 
+    /* 注意：辅助函数必须放在内核函数之前，因为它们是 __device__ 函数 */
     snprintf(out, total_len,
+        "%s"
         "%s"
         "%s"
         "extern \"C\" __global__ void %s%s\n"
@@ -175,11 +219,18 @@ static char* translate_to_cuda(const char* name, const char* src, ace_dtype_t dt
         "    const int BSIZE = blockDim.x;\n"
         "    %.*s\n"
         "}\n",
-        bf16_header,
+        type_headers,
+        type_helpers,
         type_macros,
         name, params,
         (int)body_len, body_start + 1
     );
+
+    /* 调试输出：打印生成的 CUDA 代码 */
+    /* if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16) {
+        printf("[CUDA] Generated code for %s (%s):\n---\n%.*s\n---\n", 
+               name, type_name, (int)total_len, out);
+    } */
 
     free(params);
     free(code);
@@ -369,17 +420,34 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
         char arch_opt[64];
         snprintf(arch_opt, sizeof(arch_opt), "-arch=compute_%d%d", d->compute_major, d->compute_minor);
-        
-        /* 为 float16 添加 FP16 支持选项 */
-        const char* opts[4];
-        int opt_count = 2;
+
+        /* 为 FP16/BF16 添加特殊编译选项 */
+        const char* opts[16];
+        int opt_count = 4;
         opts[0] = arch_opt;
         opts[1] = "-default-device";
-        
-        if (dtype == ACE_DTYPE_FLOAT16) {
-            /* 为 FP16 启用半精度支持 */
-            if (d->compute_major >= 6) {
-                opts[opt_count++] = "-use_fast_math";
+        opts[2] = "--std=c++11";
+        opts[3] = "--include-path=/usr/include";  /* 添加 CUDA 头文件搜索路径 */
+
+        /* 为 FP16 和 BF16 启用半精度支持 */
+        if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16) {
+            /* 启用 fast math 以支持半精度运算 */
+            opts[opt_count++] = "--fmad=true";
+            opts[opt_count++] = "--use_fast_math";
+
+            /* 设置正确的架构版本以启用 FP16 指令 */
+            /* Maxwell (5.x) 及以后支持 FP16 存储，Pascal (6.x) 及以后支持 FP16 运算 */
+            int arch_version = d->compute_major * 10 + d->compute_minor;
+            if (arch_version >= 60) {
+                /* Pascal 及以上：完整 FP16 支持 */
+                char arch_def[64];
+                snprintf(arch_def, sizeof(arch_def), "-D__CUDA_ARCH__=%d%d", d->compute_major, d->compute_minor);
+                opts[opt_count++] = arch_def;
+            } else if (arch_version >= 50) {
+                /* Maxwell：支持 FP16 存储和转换，但不支持原生 FP16 运算 */
+                char arch_def[64];
+                snprintf(arch_def, sizeof(arch_def), "-D__CUDA_ARCH__=%d0", d->compute_major);
+                opts[opt_count++] = arch_def;
             }
         }
 

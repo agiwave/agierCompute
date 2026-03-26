@@ -463,20 +463,39 @@ static inline const char* ace_error_string(ace_error_t err) {
 
 
 #else
-    #define ACE_NVOKE_ARGSIZE(x) _Generic((x), \
-        ace_device_t: 0, \
-        default: sizeof(*x))
+    /* 获取参数大小：buffer 为 0，标量为实际大小 */
+    #define ACE_INVOKE_ARGSIZE(x) _Generic((x), \
+        ace_buffer_t: 0, \
+        default: sizeof(x))
 
-
-    /* C 语言版本 - 使用简化宏（如果没有定义 ACE_INVOKE） */
+    /* 优雅方案：使用参数计数和连接宏展开
+     * 比之前的实现更简洁，支持最多 8 个参数
+     */
+    
+    /* 参数计数 */
+    #define _ACE_NARGS(...) _ACE_NARGS_(__VA_ARGS__, 8,7,6,5,4,3,2,1,)
+    #define _ACE_NARGS_(_1,_2,_3,_4,_5,_6,_7,_8,N,...) N
+    
+    /* 连接宏 */
+    #define _ACE_CAT(a, b) _ACE_CAT_(a, b)
+    #define _ACE_CAT_(a, b) a##b
+    
+    /* 大小展开 - 支持 1-8 个参数 */
+    #define _ACE_SIZES_1(a1) ACE_INVOKE_ARGSIZE(a1)
+    #define _ACE_SIZES_2(a1,a2) _ACE_SIZES_1(a1),ACE_INVOKE_ARGSIZE(a2)
+    #define _ACE_SIZES_3(a1,a2,a3) _ACE_SIZES_2(a1,a2),ACE_INVOKE_ARGSIZE(a3)
+    #define _ACE_SIZES_4(a1,a2,a3,a4) _ACE_SIZES_3(a1,a2,a3),ACE_INVOKE_ARGSIZE(a4)
+    #define _ACE_SIZES_5(a1,a2,a3,a4,a5) _ACE_SIZES_4(a1,a2,a3,a4),ACE_INVOKE_ARGSIZE(a5)
+    #define _ACE_SIZES_6(a1,a2,a3,a4,a5,a6) _ACE_SIZES_5(a1,a2,a3,a4,a5),ACE_INVOKE_ARGSIZE(a6)
+    #define _ACE_SIZES_7(a1,a2,a3,a4,a5,a6,a7) _ACE_SIZES_6(a1,a2,a3,a4,a5,a6),ACE_INVOKE_ARGSIZE(a7)
+    #define _ACE_SIZES_8(a1,a2,a3,a4,a5,a6,a7,a8) _ACE_SIZES_7(a1,a2,a3,a4,a5,a6,a7),ACE_INVOKE_ARGSIZE(a8)
+    
+    /* 主宏 */
     #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
         do { \
             void* _args[] = {__VA_ARGS__}; \
-            int _nargs = sizeof(_args) / sizeof(_args[0]); \
-            int _sizes[16] = {0}; \
-            for (int _i = 0; _i < _nargs && _i < 16; _i++) { \
-                _sizes[_i] = ACE_INVOKE_ARGSIZE(_args[_i]); \
-            } \
+            int _sizes[] = {_ACE_CAT(_ACE_SIZES_, _ACE_NARGS(__VA_ARGS__))(__VA_ARGS__)}; \
+            int _nargs = (int)(sizeof(_args) / sizeof(_args[0])); \
             ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _sizes, _nargs); \
         } while(0)
 #endif

@@ -27,17 +27,12 @@ add_executable(test_kernels kernel_tests.c)
 target_include_directories(test_kernels PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_kernels PRIVATE ace_core m)
 
-# 6. 数据类型测试
+# 6. 数据类型测试（包含 AI 数据类型：FLOAT16, BFLOAT16, INT8, UINT8, INT16）
 add_executable(test_dtypes test_dtypes.c)
 target_include_directories(test_dtypes PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_dtypes PRIVATE ace_core m)
 
-# 6b. AI 数据类型测试 (FLOAT16/BFLOAT16/INT8 等)
-add_executable(test_ai_dtypes test_ai_dtypes.c)
-target_include_directories(test_ai_dtypes PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_ai_dtypes PRIVATE ace_core m)
-
-# 6c. 数据类型调试测试
+# 6b. 数据类型调试测试
 add_executable(test_dtype_debug test_dtype_debug.c)
 target_include_directories(test_dtype_debug PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_dtype_debug PRIVATE ace_core m)
@@ -104,16 +99,9 @@ set_tests_properties(All_Kernels PROPERTIES
     TIMEOUT 600
 )
 
-# 数据类型测试
+# 数据类型测试（包含 AI 数据类型）
 add_test(NAME Data_Types COMMAND test_dtypes)
 set_tests_properties(Data_Types PROPERTIES
-    LABELS "All;DataTypes;Functionality"
-    TIMEOUT 300
-)
-
-# AI 数据类型测试
-add_test(NAME AI_Data_Types COMMAND test_ai_dtypes)
-set_tests_properties(AI_Data_Types PROPERTIES
     LABELS "All;DataTypes;Functionality;AI"
     TIMEOUT 300
 )
