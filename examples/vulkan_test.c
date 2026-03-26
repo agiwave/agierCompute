@@ -45,7 +45,7 @@ int test_device(ace_device_t dev, int idx) {
     printf("  Running kernel... ");
     fflush(stdout);
 
-    ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_error_t err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
 
     if (err != ACE_OK) {
         printf("FAILED (err=%d)\n", err);

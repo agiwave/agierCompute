@@ -54,25 +54,19 @@ int main() {
         err = ace_buffer_write(buf_b, h_b, bytes);
         printf("  write buf_b: %s\n", err == ACE_OK ? "OK" : "FAIL");
         
-        int n = N;
-        void* args[] = {&n, buf_a, buf_b, buf_c};
-        int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-        
-        err = ace_kernel_invoke(dev, _ace_get_test_add(), ACE_DTYPE_FLOAT16, N, args, types, 4);
-        printf("  invoke FLOAT16: %s (err=%d)\n", err == ACE_OK ? "OK" : "FAIL", err);
-        
-        if (err == ACE_OK) {
-            ace_finish(dev);
-            err = ace_buffer_read(buf_c, h_c, bytes);
-            printf("  read result: %s\n", err == ACE_OK ? "OK" : "FAIL");
-            
-            printf("  Results: ");
-            for (int i = 0; i < N; i++) {
-                printf("0x%04X ", h_c[i]);
-            }
-            printf("\n");
+        /* 使用 ACE_INVOKE 宏 */
+        ACE_INVOKE(dev, test_add, ACE_DTYPE_FLOAT16, N, &N, buf_a, buf_b, buf_c);
+
+        ace_finish(dev);
+        err = ace_buffer_read(buf_c, h_c, bytes);
+        printf("  read result: %s\n", err == ACE_OK ? "OK" : "FAIL");
+
+        printf("  Results: ");
+        for (int i = 0; i < N; i++) {
+            printf("0x%04X ", h_c[i]);
         }
-        
+        printf("\n");
+
         ace_buffer_free(buf_a);
         ace_buffer_free(buf_b);
         ace_buffer_free(buf_c);
@@ -112,14 +106,10 @@ int main() {
         
         err = ace_buffer_write(buf_b, h_b, bytes);
         printf("  write buf_b: %s\n", err == ACE_OK ? "OK" : "FAIL");
-        
-        int n = N;
-        void* args[] = {&n, buf_a, buf_b, buf_c};
-        int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-        
-        err = ace_kernel_invoke(dev, _ace_get_test_add(), ACE_DTYPE_FLOAT16, N, args, types, 4);
-        printf("  invoke FLOAT16: %s (err=%d)\n", err == ACE_OK ? "OK" : "FAIL", err);
-        
+
+        /* 使用 ACE_INVOKE 宏 */
+        ACE_INVOKE(dev, test_add, ACE_DTYPE_FLOAT16, N, &N, buf_a, buf_b, buf_c);
+
         ace_device_release(dev);
     }
     

@@ -68,7 +68,7 @@ int main() {
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
 
     printf("Launching kernel...\n");
-    err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
     printf("  launch: %s (err=%d)\n", err == ACE_OK ? "OK" : "FAIL", err);
 
     printf("\nSyncing...\n");

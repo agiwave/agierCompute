@@ -127,11 +127,7 @@ static void test_fill(ace_device_t dev) {
     ace_buffer_t buf_out;
     ACE_CHECK_VOID(ace_buffer_alloc(dev, N * sizeof(float), &buf_out));
 
-    /* 使用传统方式调用（多个标量参数） */
-    int n = N;
-    void* args[] = {&n, &fill_val, buf_out};
-    int types[] = {ACE_VAL, ACE_VAL, ACE_BUF};
-    ace_kernel_invoke(dev, _ace_get_kernel_fill(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ACE_INVOKE(dev, kernel_fill, ACE_DTYPE_FLOAT32, N, &N, &fill_val, buf_out);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_out, h_out, N * sizeof(float)));

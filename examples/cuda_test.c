@@ -69,7 +69,7 @@ int main() {
         void* args[] = {&n, buf_a, buf_b, buf_c};
         int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
 
-        ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+        ace_error_t err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
         ace_finish(dev);
         ace_buffer_read(buf_c, h_c, N * sizeof(float));
 
@@ -107,7 +107,7 @@ int main() {
         void* args[] = {&n, &alpha, buf_in, buf_out};
         int types[] = {ACE_VAL, ACE_VAL, ACE_BUF, ACE_BUF};
 
-        ace_error_t err = ace_kernel_invoke(dev, _ace_get_scale(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+        ace_error_t err = ACE_INVOKE(dev, scale, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
         ace_finish(dev);
         ace_buffer_read(buf_out, h_out, N * sizeof(float));
 
