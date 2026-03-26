@@ -606,10 +606,20 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         }
     }
 
-    /* 如果未缓存，编译内核（简化：调用现有编译逻辑） */
+    /* 如果未缓存，编译内核 */
     if (!k) {
-        /* 需要实现编译逻辑，暂时返回错误 */
-        return ACE_ERROR_COMPILE;
+        /* 调用编译函数 */
+        void* compiled_kernel = NULL;
+        char* err_msg = NULL;
+        ace_error_t err = vk_kernel_compile(dev, kernel_def->name, kernel_def->src, &compiled_kernel, &err_msg);
+        if (err != ACE_OK) {
+            if (err_msg) {
+                printf("[Vulkan] Compile error: %s\n", err_msg);
+                free(err_msg);
+            }
+            return ACE_ERROR_COMPILE;
+        }
+        k = (vk_cached_kernel_t*)compiled_kernel;
     }
 
     /* Find device from first buffer */

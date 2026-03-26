@@ -20,6 +20,21 @@
  * Internal structures
  * ============================================================================ */
 
+/* 内核缓存：每个设备一个哈希表 */
+#define KERNEL_CACHE_SIZE 256
+
+typedef struct cuda_kernel_s {
+    int id;                /* 内核 ID */
+    CUmodule module;
+    CUfunction func;
+    char* name;
+    struct cuda_kernel_s* next;  /* 用于哈希表链式处理 */
+} cuda_kernel_t;
+
+typedef struct {
+    cuda_kernel_t* buckets[KERNEL_CACHE_SIZE];
+} cuda_kernel_cache_t;
+
 typedef struct {
     CUdevice device;
     CUcontext context;
@@ -36,21 +51,6 @@ typedef struct {
     CUdeviceptr ptr;
     size_t size;
 } cuda_buffer_t;
-
-typedef struct cuda_kernel_s {
-    int id;                /* 内核 ID */
-    CUmodule module;
-    CUfunction func;
-    char* name;
-    cuda_device_t* dev;
-    struct cuda_kernel_s* next;  /* 用于哈希表链式处理 */
-} cuda_kernel_t;
-
-/* 内核缓存：每个设备一个哈希表 */
-#define KERNEL_CACHE_SIZE 256
-typedef struct {
-    cuda_kernel_t* buckets[KERNEL_CACHE_SIZE];
-} cuda_kernel_cache_t;
 
 /* ============================================================================
  * ACE -> CUDA translation
@@ -343,7 +343,6 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
         k->id = kernel_def->id;
         k->name = strdup(kernel_def->name);
-        k->dev = d;
 
         if (cuModuleLoadData(&k->module, ptx) != CUDA_SUCCESS) {
             free(ptx);
