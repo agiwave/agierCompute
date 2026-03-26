@@ -483,7 +483,7 @@ static ace_error_t vk_kernel_compile(void* dev, ace_kernel_def_t* kernel_def,
         return ACE_ERROR_MEM;
     }
 
-    /* 从 kernel_def 获取数据类型 */
+    /* 使用 kernel_def 中的数据类型 */
     ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
 
     int n_buffers = 0, n_scalars = 0;

@@ -299,14 +299,14 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
     /* 如果未缓存，编译内核 */
     if (!cached) {
-        /* 确定数据类型 */
+        /* 使用 kernel_def 中的数据类型 */
         const char* type_name = "float";
-        const char* suffix = strrchr(kernel_def->name, '_');
-        if (suffix) {
-            suffix++;
-            if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
-            else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
-            else if (strcmp(suffix, "long") == 0 || strcmp(suffix, "int64") == 0) type_name = "long";
+        switch ((ace_dtype_t)kernel_def->dtype) {
+            case ACE_DTYPE_FLOAT32: type_name = "float"; break;
+            case ACE_DTYPE_FLOAT64: type_name = "double"; break;
+            case ACE_DTYPE_INT32:   type_name = "int"; break;
+            case ACE_DTYPE_INT64:   type_name = "long"; break;
+            default: type_name = "float"; break;
         }
 
         char* cuda_src = translate_to_cuda(kernel_def->name, kernel_def->src, type_name);
