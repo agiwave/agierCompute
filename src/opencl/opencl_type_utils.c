@@ -26,13 +26,27 @@ const char* ocl_get_type_name(ace_dtype_t dtype) {
     }
 }
 
-/* 获取 OpenCL 扩展 pragma */
+/* 获取 OpenCL 扩展 pragma
+ * 根据设备能力返回扩展声明或空字符串（使用模拟）
+ */
 const char* ocl_get_extension(ace_dtype_t dtype) {
+    /* 声明外部变量 */
+    extern ocl_device_extensions_t g_device_exts;
+    
     switch (dtype) {
         case ACE_DTYPE_FLOAT16:
-            return "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n";
+            /* 检查设备是否支持 cl_khr_fp16 */
+            if (g_device_exts.has_fp16) {
+                return "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n";
+            } else {
+                return "";  /* 使用 uint 模拟 */
+            }
         case ACE_DTYPE_FLOAT64:
-            return "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n";
+            if (g_device_exts.has_fp64) {
+                return "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n";
+            } else {
+                return "";  /* 使用 float 模拟 */
+            }
         default:
             return "";
     }

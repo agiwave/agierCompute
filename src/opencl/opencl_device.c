@@ -12,6 +12,24 @@
 
 cl_platform_id g_opencl_platform;
 
+/* 设备扩展支持状态 - 全局变量 */
+ocl_device_extensions_t g_device_exts = {0};
+
+/* 检查设备扩展支持 */
+static void check_device_extensions(cl_device_id device) {
+    char extensions[2048] = "";
+    clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
+    
+    g_device_exts.has_fp16 = (strstr(extensions, "cl_khr_fp16") != NULL);
+    g_device_exts.has_fp64 = (strstr(extensions, "cl_khr_fp64") != NULL);
+    g_device_exts.has_int64 = 1;  /* OpenCL 1.0+ 都支持 int64 */
+    
+    printf("[OpenCL] Device extensions: FP16=%s, FP64=%s, INT64=%s\n",
+           g_device_exts.has_fp16 ? "YES" : "NO",
+           g_device_exts.has_fp64 ? "YES" : "NO",
+           g_device_exts.has_int64 ? "YES" : "NO");
+}
+
 ace_error_t ocl_init(ace_backend_info_t* info) {
     cl_uint num_platforms;
     if (clGetPlatformIDs(1, &g_opencl_platform, &num_platforms) != CL_SUCCESS || num_platforms == 0) {
@@ -82,6 +100,9 @@ ace_error_t ocl_device_get(int idx, void** dev) {
         free(d);
         return ACE_ERROR_DEVICE;
     }
+
+    /* 检查设备扩展支持 */
+    check_device_extensions(d->device);
 
     /* 初始化内核缓存 */
     memset(&d->kernel_cache, 0, sizeof(d->kernel_cache));

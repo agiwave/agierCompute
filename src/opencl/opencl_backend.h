@@ -50,6 +50,15 @@ typedef struct {
 /* Global platform */
 extern cl_platform_id g_opencl_platform;
 
+/* Device extensions status */
+typedef struct {
+    int has_fp16;        /* cl_khr_fp16 */
+    int has_fp64;        /* cl_khr_fp64 */
+    int has_int64;       /* native support */
+} ocl_device_extensions_t;
+
+extern ocl_device_extensions_t g_device_exts;
+
 /* ============================================================================
  * Type utilities (opencl_type_utils.c)
  * ============================================================================ */
