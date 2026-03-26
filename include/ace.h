@@ -225,11 +225,18 @@ typedef struct ace_buffer_* ace_buffer_t;
 typedef void* ace_kernel_t;
 
 /* ============================================================================
- * 参数类型标记
+ * 参数传递设计 - 使用 sizeof() 表示参数大小
  * ============================================================================ */
 
-#define ACE_VAL  0  /* 标量值（传指针） */
-#define ACE_BUF  1  /* 缓冲区（传 ace_buffer_t） */
+/* 参数大小规则：
+ * - 正数 (>0)：表示标量参数的字节数，如 sizeof(int)、sizeof(float) 等
+ * - 0 或负数：表示缓冲区 (ace_buffer_t)
+ */
+#define ACE_ARG_BUFFER  0   /* 缓冲区 */
+
+/* 向后兼容的旧宏 */
+#define ACE_VAL  sizeof(int)    /* 兼容旧代码 */
+#define ACE_BUF  ACE_ARG_BUFFER /* 兼容旧代码 */
 
 /* ============================================================================
  * 3D调度配置
@@ -288,10 +295,6 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
         return k_##name; \
     }
 
-/* 简化的内核调用宏 */
-#define ACE_CALL(dev, name, dtype, n, args, types, nargs) \
-    ace_kernel_invoke(dev, _ace_get_##name(), dtype, n, args, types, nargs)
-
 /* ============================================================================
  * 简化宏 - 推荐使用
  * ============================================================================ */
@@ -314,15 +317,20 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
     } \
 } while(0)
 
-/* ACE_INVOKE: 标准宏 - 自动推断参数类型（dtype 可是枚举或变量） */
+/* ACE_INVOKE: 标准宏 - 自动推断参数大小
+ * 用法：ACE_INVOKE(dev, vec_add, FLOAT32, N, &n, buf_a, buf_b, buf_c);
+ *      ACE_INVOKE(dev, scale, FLOAT32, N, &n, &alpha, buf_in, buf_out);
+ * 说明：自动推断参数大小 - 指针视为 buffer，其他根据 sizeof 推断大小
+ */
 #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
     do { \
         void* _args[] = {__VA_ARGS__}; \
         int _nargs = sizeof(_args) / sizeof(_args[0]); \
-        int _types[16]; \
-        for (int _i = 0; _i < _nargs && _i < 16; _i++) \
-            _types[_i] = (_i == 0) ? ACE_VAL : ACE_BUF; \
-        ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _types, _nargs); \
+        int _sizes[16] = {0}; \
+        for (int _i = 0; _i < _nargs && _i < 16; _i++) { \
+            _sizes[_i] = (_i == 0) ? sizeof(int) : ACE_ARG_BUFFER; \
+        } \
+        ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _sizes, _nargs); \
     } while(0)
 
 #define LID        /* 局部线程ID */
