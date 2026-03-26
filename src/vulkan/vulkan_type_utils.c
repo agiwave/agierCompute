@@ -15,6 +15,10 @@
 static vk_device_features_t g_device_features = {0};
 
 void vk_detect_device_features(VkPhysicalDevice physical_device) {
+    /* 检测 Vulkan 1.0 基础特性 */
+    VkPhysicalDeviceFeatures features10 = {0};
+    vkGetPhysicalDeviceFeatures(physical_device, &features10);
+    
     /* 检测 Vulkan 1.2 特性 */
     VkPhysicalDeviceVulkan12Features features12 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
@@ -29,8 +33,7 @@ void vk_detect_device_features(VkPhysicalDevice physical_device) {
 
     g_device_features.has_float16 = features12.shaderFloat16;
     g_device_features.has_int8 = features12.shaderInt8;
-    /* shaderInt16 在 Vulkan 1.2 中不可用，需要单独检测 */
-    g_device_features.has_int16 = 0;  /* 暂时设为 0 */
+    g_device_features.has_int16 = features10.shaderInt16;  /* shaderInt16 在 Vulkan 1.0 特性中 */
 
     /* 检测 16-bit storage 扩展 */
     VkPhysicalDevice16BitStorageFeatures storage16 = {
@@ -66,6 +69,13 @@ void vk_detect_device_features(VkPhysicalDevice physical_device) {
            g_device_features.has_16bit_storage,
            g_device_features.has_8bit_storage,
            g_device_features.has_bfloat16);
+    
+    /* 打印详细支持信息 */
+    printf("[Vulkan] Native type support:\n");
+    printf("  - FLOAT16: %s\n", (g_device_features.has_float16 && g_device_features.has_16bit_storage) ? "YES" : "NO (using emulation)");
+    printf("  - BFLOAT16: %s\n", (g_device_features.has_bfloat16 && g_device_features.has_16bit_storage) ? "YES" : "NO (using emulation)");
+    printf("  - INT8: %s\n", (g_device_features.has_int8 && g_device_features.has_8bit_storage) ? "YES" : "NO (using emulation)");
+    printf("  - INT16: %s\n", (g_device_features.has_int16 && g_device_features.has_16bit_storage) ? "YES" : "NO (using emulation)");
 }
 
 int vk_supports_native_storage(ace_dtype_t dtype) {
@@ -137,6 +147,12 @@ int vk_is_float_dtype(ace_dtype_t dtype) {
 }
 
 const char* vk_get_glsl_extension(ace_dtype_t dtype) {
+    /* 检查是否支持原生类型，不支持则返回空字符串（使用 uint 模拟） */
+    if (!vk_supports_native_storage(dtype)) {
+        return "";  /* 使用 uint 模拟，不需要扩展 */
+    }
+    
+    /* 设备支持原生类型，返回相应的扩展声明 */
     switch (dtype) {
         case ACE_DTYPE_FLOAT64:
             return "#extension GL_ARB_gpu_shader_fp64 : require\n";
@@ -157,6 +173,7 @@ const char* vk_get_glsl_extension(ace_dtype_t dtype) {
 }
 
 char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype, int* n_buffers, int* n_scalars) {
+    (void)name;  /* 可能未使用 */
     const char* body_start = strchr(src, '{');
     const char* body_end = strrchr(src, '}');
     if (!body_start || !body_end) {
@@ -166,8 +183,6 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     size_t body_len = body_end - body_start - 1;
     const char* buffer_type = vk_get_buffer_type_name(dtype);
     int use_native = vk_supports_native_storage(dtype);
-    (void)use_native; /* 暂时未使用 */
-    (void)name;
 
     typedef struct {
         char name[64];
@@ -236,7 +251,8 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
                 char line[128];
-                const char* scalar_type = (scalar_idx == 0) ? "int" : buffer_type;
+                /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
+                const char* scalar_type = (scalar_idx == 0) ? "int" : (use_native ? buffer_type : "uint");
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
                 char access[128];
