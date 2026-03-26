@@ -61,12 +61,25 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
     char* code = strdup(src);
     if (!code) return NULL;
 
-    /* 添加 CUDA 特殊类型定义 */
-    char* header = NULL;
+    /* 添加 CUDA 特殊类型定义和转换宏 */
+    const char* header = NULL;
+    const char* type_convert = NULL;
+
     if (strcmp(type_name, "half") == 0) {
         header = "#include <cuda_fp16.h>\n";
+        /* 为 half 类型添加转换宏 */
+        type_convert = 
+            "#define ACE_HALF_TO_FLOAT(h) __half2float(h)\n"
+            "#define ACE_FLOAT_TO_HALF(f) __float2half(f)\n"
+            "#define ACE_HALF_ADD(a, b) __hadd(a, b)\n"
+            "#define ACE_HALF_MUL(a, b) __hmul(a, b)\n";
     } else if (strcmp(type_name, "__nv_bfloat16") == 0) {
         header = "#include <cuda_bf16.h>\n";
+        type_convert =
+            "#define ACE_BFLOAT16_TO_FLOAT(b) __bfloat162float(b)\n"
+            "#define ACE_FLOAT_TO_BFLOAT16(f) __float2bfloat16(f)\n"
+            "#define ACE_BFLOAT16_ADD(a, b) __hadd(a, b)\n"
+            "#define ACE_BFLOAT16_MUL(a, b) __hmul(a, b)\n";
     }
 
     char* p;
@@ -108,6 +121,8 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
         free(code);
         char* out = (char*)malloc(256);
         snprintf(out, 256, "extern \"C\" __global__ void %s() {}\n", name);
+        if (header) free(header);
+        if (type_convert) free(type_convert);
         return out;
     }
 
@@ -118,10 +133,13 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
 
     size_t body_len = body_end - body_start - 1;
 
-    size_t total_len = strlen(name) + params_len + body_len + 512 + (header ? strlen(header) : 0);
+    size_t total_len = strlen(name) + params_len + body_len + 1024 + 
+                       (header ? strlen(header) : 0) + 
+                       (type_convert ? strlen(type_convert) : 0);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
+        "%s"
         "%s"
         "extern \"C\" __global__ void %s%s\n"
         "{\n"
@@ -131,13 +149,13 @@ static char* translate_to_cuda(const char* name, const char* src, const char* ty
         "    %.*s\n"
         "}\n",
         header ? header : "",
+        type_convert ? type_convert : "",
         name, params,
         (int)body_len, body_start + 1
     );
 
     free(params);
     free(code);
-    if (header) free(header);
     return out;
 }
 

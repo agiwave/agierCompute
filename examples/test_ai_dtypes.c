@@ -39,10 +39,10 @@ typedef struct {
 
 static dtype_config_t dtype_configs[] = {
     /* AI 常用数据类型 - 已验证支持的 */
+    /* FLOAT16: Vulkan 支持，CUDA/OpenCL 需要特殊处理 */
     {ACE_DTYPE_INT8,    "INT8",    1},
     {ACE_DTYPE_UINT8,   "UINT8",   1},
     {ACE_DTYPE_INT16,   "INT16",   2},
-    /* FLOAT16/BFLOAT16 需要特殊处理，暂不测试 */
 };
 
 #define NUM_DTYPES (sizeof(dtype_configs) / sizeof(dtype_configs[0]))

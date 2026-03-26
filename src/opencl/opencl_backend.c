@@ -58,7 +58,13 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
     /* 替换 T 为实际类型 */
     char* code = strdup(src);
     if (!code) return NULL;
-    
+
+    /* 添加 OpenCL 特殊类型定义 */
+    const char* header = NULL;
+    if (strcmp(type_name, "half") == 0) {
+        header = "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n";
+    }
+
     char* p;
     while ((p = strstr(code, "T")) != NULL) {
         int is_type = 1;
@@ -72,13 +78,12 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
             if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
                 (next >= '0' && next <= '9') || next == '_') is_type = 0;
         }
-        
+
         if (is_type) {
-            size_t rest_len = strlen(p + 1);
             size_t type_len = strlen(type_name);
-            char* new_code = malloc(strlen(code) + type_len);
+            char* new_code = malloc(strlen(code) + type_len + 1);
             if (!new_code) { free(code); return NULL; }
-            
+
             *p = '\0';
             strcpy(new_code, code);
             strcat(new_code, type_name);
@@ -89,7 +94,7 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
             p++;
         }
     }
-    
+
     const char* params_start = strchr(code, '(');
     const char* params_end = strchr(code, ')');
     const char* body_start = strchr(code, '{');
@@ -97,66 +102,37 @@ static char* translate_to_opencl(const char* name, const char* src, const char* 
 
     if (!params_start || !params_end || !body_start || !body_end) {
         free(code);
+        if (header) free(header);
         char* out = (char*)malloc(256);
         snprintf(out, 256, "__kernel void %s() { int GID = get_global_id(0); }\n", name);
         return out;
     }
 
-    /* Process parameters - add __global to pointer types */
     size_t params_len = params_end - params_start + 1;
-    char* new_params = (char*)malloc(params_len * 2);
-
-    const char* p2 = params_start;
-    char* dst = new_params;
-
-    while (p2 <= params_end) {
-        const char* star = strchr(p2, '*');
-        const char* next_delim = strchr(p2, ',');
-        const char* paren = strchr(p2, ')');
-
-        if (!next_delim || (paren && paren < next_delim)) next_delim = paren;
-
-        if (star && next_delim && star < next_delim) {
-            /* Add __global before pointer parameter */
-            const char* type_start = p2 + 1;
-            while (type_start < star &&
-                   (*type_start == ' ' || *type_start == '\t' ||
-                    *type_start == ',' || *type_start == '(')) {
-                *dst++ = *type_start++;
-            }
-
-            if (type_start < star) {
-                strcpy(dst, "__global ");
-                dst += 9;
-
-                while (type_start <= params_end && *type_start != ',') {
-                    *dst++ = *type_start++;
-                    if (*type_start == ')') break;
-                }
-                p2 = type_start;
-                continue;
-            }
-        }
-        *dst++ = *p2++;
-    }
-    *dst = '\0';
+    char* params = (char*)malloc(params_len + 1);
+    strncpy(params, params_start, params_len);
+    params[params_len] = '\0';
 
     size_t body_len = body_end - body_start - 1;
 
-    size_t total_len = strlen(name) + strlen(new_params) + body_len + 256;
+    size_t total_len = strlen(name) + params_len + body_len + 512 + (header ? strlen(header) : 0);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
+        "%s"
         "__kernel void %s%s\n"
         "{\n"
         "    int GID = get_global_id(0);\n"
+        "    int LID = get_local_id(0);\n"
+        "    int BSIZE = get_local_size(0);\n"
         "    %.*s\n"
         "}\n",
-        name, new_params,
+        header ? header : "",
+        name, params,
         (int)body_len, body_start + 1
     );
 
-    free(new_params);
+    free(params);
     free(code);
     return out;
 }
