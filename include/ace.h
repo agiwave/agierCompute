@@ -403,7 +403,7 @@ static inline const char* ace_error_string(ace_error_t err) {
 } /* end extern "C" */
 #endif
 
-#ifdef __cplusplus
+#ifdef __KARGS__
     #include <cassert>
     #include <type_traits>
 
@@ -459,7 +459,15 @@ static inline const char* ace_error_string(ace_error_t err) {
     /* ACE_INVOKE: C++ 类型安全宏 */
     #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
         KInvoker(__VA_ARGS__).invoke(dev, _ace_get_##kernel_name(), dtype, n)
+
+
+
 #else
+    #define ACE_NVOKE_ARGSIZE(x) _Generic((x), \
+        ace_device_t: 0, \
+        default: sizeof(*x))
+
+
     /* C 语言版本 - 使用简化宏（如果没有定义 ACE_INVOKE） */
     #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
         do { \
@@ -467,7 +475,7 @@ static inline const char* ace_error_string(ace_error_t err) {
             int _nargs = sizeof(_args) / sizeof(_args[0]); \
             int _sizes[16] = {0}; \
             for (int _i = 0; _i < _nargs && _i < 16; _i++) { \
-                _sizes[_i] = (_i == 0) ? sizeof(int) : 0; \
+                _sizes[_i] = ACE_INVOKE_ARGSIZE(_args[_i]); \
             } \
             ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _sizes, _nargs); \
         } while(0)
