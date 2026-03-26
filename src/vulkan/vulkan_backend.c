@@ -152,8 +152,9 @@ static char* translate_to_glsl(const char* name, const char* src, ace_dtype_t dt
         int scalar_idx = 0;
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
+                /* 第一个标量参数通常是 n (int)，后续可能是 float */
                 char line[128];
-                snprintf(line, sizeof(line), "  float s%d;\n", scalar_idx);
+                snprintf(line, sizeof(line), "  int s%d;\n", scalar_idx);
                 strcat(push_constants, line);
                 char access[128];
                 snprintf(access, sizeof(access), "#define %s pc.s%d\n", params[i].name, scalar_idx);
@@ -662,16 +663,15 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         free(buf_infos);
     }
 
-    /* Push constants - 确保 4 字节对齐 */
-    /* 注意：GLSL 中使用 float 类型，所以传递 float 值 */
-    float* scalars = NULL;
+    /* Push constants - 传递 int 值（与 GLSL 类型匹配） */
+    int* scalars = NULL;
     if (k->n_scalars > 0) {
-        scalars = (float*)calloc(k->n_scalars, sizeof(float));
+        scalars = (int*)calloc(k->n_scalars, sizeof(int));
         int scalar_idx = 0;
         for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
             if (sizes[i] == ACE_ARG_VALUE) {
-                /* 传递 float 值（与 GLSL 类型匹配） */
-                scalars[scalar_idx] = *(float*)args[i];
+                /* 传递 int 值（与 GLSL 类型匹配） */
+                scalars[scalar_idx] = *(int*)args[i];
                 scalar_idx++;
             }
         }
@@ -702,7 +702,7 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
     if (k->n_scalars > 0 && scalars) {
         vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT,
-            0, k->n_scalars * sizeof(float), scalars);
+            0, k->n_scalars * sizeof(int), scalars);
     }
 
     uint32_t groups = (uint32_t)((cfg->grid[0] * cfg->block[0] + 255) / 256);
