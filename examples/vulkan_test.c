@@ -13,7 +13,7 @@ ACE_KERNEL(vec_add,
         int i = GID;
         if (i < n) c[i] = a[i] + b[i];
     }
-);
+)
 
 int test_device(ace_device_t dev, int idx) {
     ace_device_props_t props;

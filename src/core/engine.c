@@ -228,13 +228,22 @@ static backend_entry_t* find_backend(ace_device_type_t type) {
  * ============================================================================ */
 
 ace_error_t ace_device_count(ace_device_type_t type, int* count) {
+    if (!count) return ACE_ERROR_INVALID;
+    *count = 0;
+
     auto_init();
 
-    if (type == ACE_DEVICE_CPU) {
-        *count = 1;  /* CPU 总是可用 */
+    if (type == ACE_DEVICE_ALL) {
+        /* 统计所有类型设备总数 */
+        for (int t = 0; t < ACE_DEVICE_COUNT - 1; t++) {
+            int c = 0;
+            ace_device_count((ace_device_type_t)t, &c);
+            *count += c;
+        }
         return ACE_OK;
     }
 
+    /* 所有后端统一处理：查找后端并调用其 device_count */
     backend_entry_t* b = find_backend(type);
     if (!b || !b->ops.device_count) {
         *count = 0;
@@ -247,6 +256,22 @@ ace_error_t ace_device_count(ace_device_type_t type, int* count) {
 ace_error_t ace_device_get(ace_device_type_t type, int idx, ace_device_t* dev) {
     auto_init();
 
+    if (type == ACE_DEVICE_ALL) {
+        /* 遍历所有类型查找第 idx 个设备 */
+        int global_idx = 0;
+        for (int t = 0; t < ACE_DEVICE_COUNT - 1; t++) {
+            int count = 0;
+            ace_device_count((ace_device_type_t)t, &count);
+
+            if (idx < global_idx + count) {
+                return ace_device_get((ace_device_type_t)t, idx - global_idx, dev);
+            }
+            global_idx += count;
+        }
+        return ACE_ERROR_NOT_FOUND;
+    }
+
+    /* 所有后端统一处理 */
     backend_entry_t* b = find_backend(type);
     if (!b) return ACE_ERROR_NOT_FOUND;
 

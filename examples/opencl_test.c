@@ -11,7 +11,7 @@ ACE_KERNEL(vec_add,
         int i = GID;
         if (i < n) c[i] = a[i] + b[i];
     }
-);
+)
 
 int main() {
     printf("========================================\n");

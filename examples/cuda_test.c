@@ -11,14 +11,14 @@ ACE_KERNEL(vec_add,
         int i = GID;
         if (i < n) c[i] = a[i] + b[i];
     }
-);
+)
 
 ACE_KERNEL(scale,
     void scale(int n, T alpha, T* in, T* out) {
         int i = GID;
         if (i < n) out[i] = in[i] * alpha;
     }
-);
+)
 
 int main() {
     printf("========================================\n");

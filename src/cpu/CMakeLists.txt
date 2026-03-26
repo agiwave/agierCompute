@@ -1,6 +1,9 @@
 # =============================================================================
-# AgierCompute CPU Backend
+# AgierCompute CPU Backend (Placeholder)
 # =============================================================================
+
+# CPU 后端占位实现 - 不包含 JIT 编译
+# 实际使用时请启用 GPU 后端 (CUDA/OpenCL/Vulkan)
 
 add_library(ace_be_cpu SHARED
     cpu_backend.c

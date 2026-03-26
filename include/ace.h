@@ -101,6 +101,8 @@ typedef enum {
     ACE_DEVICE_OPENCL = 2,
     ACE_DEVICE_VULKAN = 3,
     ACE_DEVICE_METAL  = 4,
+    ACE_DEVICE_ALL    = 5,  /* 遍历所有类型设备 */
+    ACE_DEVICE_COUNT  = 6,
 } ace_device_type_t;
 
 /* ============================================================================
@@ -228,6 +230,45 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
     ace_kernel_invoke(dev, _ace_get_##name(), ACE_DTYPE_##dtype, n, args, types, nargs)
 
 /* ============================================================================
+ * 简化宏 - 推荐使用
+ * ============================================================================ */
+
+/* 错误检查宏 - 用于返回 ace_error_t 的函数 */
+#define ACE_CHECK(call) do { \
+    ace_error_t _err = (call); \
+    if (_err != ACE_OK) { \
+        fprintf(stderr, "ACE error at %s:%d: %s\n", __FILE__, __LINE__, ace_error_string(_err)); \
+        return _err; \
+    } \
+} while(0)
+
+/* 错误检查宏 - 用于 void 函数 */
+#define ACE_CHECK_VOID(call) do { \
+    ace_error_t _err = (call); \
+    if (_err != ACE_OK) { \
+        fprintf(stderr, "ACE error at %s:%d: %s\n", __FILE__, __LINE__, ace_error_string(_err)); \
+        return; \
+    } \
+} while(0)
+
+/* 变长参数计数辅助宏 */
+#define ACE_ARG_COUNT(...) ACE_ARG_COUNT_(__VA_ARGS__, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+#define ACE_ARG_COUNT_(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, N, ...) N
+
+/* ACE_INVOKE 内部宏 - 构建参数数组并调用 */
+#define ACE_INVOKE_IMPL(dev, kernel_name, dtype, n, ...) do { \
+    void* _args[] = {__VA_ARGS__}; \
+    int _nargs = sizeof(_args) / sizeof(_args[0]); \
+    int _types[16]; \
+    for (int _i = 0; _i < _nargs && _i < 16; _i++) _types[_i] = ACE_BUF; \
+    ace_kernel_invoke(dev, _ace_get_##kernel_name(), ACE_DTYPE_##dtype, n, _args, _types, _nargs); \
+} while(0)
+
+/* 1D 内核调用简化宏 - 最常用 */
+#define ACE_INVOKE_1D(dev, kernel_name, dtype, n, ...) \
+    ACE_INVOKE_IMPL(dev, kernel_name, dtype, n, __VA_ARGS__)
+
+/* ============================================================================
  * 内核语言内建变量
  * ============================================================================ */
 
@@ -244,7 +285,7 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
  * 设备管理
  * ---------------------------------------------------------------------------- */
 
-/* 获取指定类型的设备数量 */
+/* 获取指定类型的设备数量（type=ACE_DEVICE_ALL 表示所有类型） */
 ACE_API ace_error_t ace_device_count(ace_device_type_t type, int* count);
 
 /* 获取设备 */
