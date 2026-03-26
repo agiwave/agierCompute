@@ -251,7 +251,7 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
                 char line[128];
-                /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
+                /* 第一个标量参数 (n) 总是 int，后续使用 uint（模拟模式）或原生类型 */
                 const char* scalar_type = (scalar_idx == 0) ? "int" : (use_native ? buffer_type : "uint");
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
@@ -269,9 +269,11 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     for (int i = 0; i < n_params && buf_idx < *n_buffers; i++) {
         if (params[i].is_buffer) {
             char buf_decl[256];
+            /* 模拟模式下使用 uint，原生模式下使用原生类型 */
+            const char* actual_type = use_native ? buffer_type : "uint";
             snprintf(buf_decl, sizeof(buf_decl),
                 "layout(binding = %d, std430) buffer B%d { %s d%d[]; };\n",
-                buf_idx, buf_idx, buffer_type, buf_idx);
+                buf_idx, buf_idx, actual_type, buf_idx);
             strcat(buffers, buf_decl);
             char def[128];
             snprintf(def, sizeof(def), "#define %s d%d\n", params[i].name, buf_idx);
@@ -284,35 +286,192 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     strncpy(body, body_start + 1, body_len);
     body[body_len] = '\0';
 
-    const char* extensions = vk_get_glsl_extension(dtype);
+    /* 模拟模式下，替换内核代码中的运算为函数调用 */
+    if (!use_native) {
+        const char* add_func = NULL;
+        const char* mul_func = NULL;
+        const char* sub_func = NULL;
+        const char* div_func = NULL;
+        
+        if (dtype == ACE_DTYPE_BFLOAT16) {
+            add_func = "bf16_add"; mul_func = "bf16_mul"; sub_func = "bf16_sub"; div_func = "bf16_div";
+        } else if (dtype == ACE_DTYPE_FLOAT16) {
+            add_func = "f16_add"; mul_func = "f16_mul"; sub_func = "f16_sub"; div_func = "f16_div";
+        } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
+            add_func = "int8_add"; mul_func = "int8_mul"; sub_func = "int8_sub";
+        } else if (dtype == ACE_DTYPE_INT16) {
+            add_func = "int16_add"; mul_func = "int16_mul"; sub_func = "int16_sub";
+        }
+        
+        /* 简单替换：将 a + b 替换为 func(a, b) - 只适用于简单表达式 */
+        /* 这是一个简化实现，复杂表达式需要更复杂的解析 */
+        if (add_func) {
+            char* p = body;
+            while ((p = strstr(p, " + ")) != NULL) {
+                /* 查找操作数 */
+                char* op1_end = p - 1;
+                while (op1_end > body && (*op1_end == ' ' || *op1_end == '\t')) op1_end--;
+                char* op1_start = op1_end;
+                while (op1_start > body && *op1_start != ' ' && *op1_start != '\t' && 
+                       *op1_start != '(' && *op1_start != ',' && *op1_start != ';') op1_start--;
+                if (*op1_start == '(' || *op1_start == ',' || *op1_start == ';') op1_start++;
+                
+                char* op2_start = p + 3;
+                while (*op2_start == ' ' || *op2_start == '\t') op2_start++;
+                char* op2_end = op2_start;
+                while (*op2_end && *op2_end != ' ' && *op2_end != '\t' && *op2_end != ';' && 
+                       *op2_end != ')' && *op2_end != ',' && *op2_end != '[') op2_end++;
+                
+                size_t op1_len = op1_end - op1_start + 1;
+                size_t op2_len = op2_end - op2_start;
+                size_t func_len = strlen(add_func);
+                
+                /* 构建新字符串 */
+                char* new_body = malloc(strlen(body) + func_len + 10);
+                strncpy(new_body, body, op1_start - body);
+                sprintf(new_body + (op1_start - body), "%s(", add_func);
+                strncpy(new_body + (op1_start - body) + func_len + 1, op1_start, op1_len);
+                strcpy(new_body + (op1_start - body) + func_len + 1 + op1_len, ", ");
+                strncpy(new_body + strlen(new_body), op2_start, op2_len);
+                strcpy(new_body + strlen(new_body), ")");
+                strcpy(new_body + strlen(new_body), op2_end);
+                
+                free(body);
+                body = new_body;
+                p = body + (op1_start - body) + func_len + 1 + op1_len + 2 + op2_len + 1;
+            }
+        }
+        if (mul_func) {
+            char* p = body;
+            while ((p = strstr(p, " * ")) != NULL) {
+                char* op1_end = p - 1;
+                while (op1_end > body && (*op1_end == ' ' || *op1_end == '\t')) op1_end--;
+                char* op1_start = op1_end;
+                while (op1_start > body && *op1_start != ' ' && *op1_start != '\t' && 
+                       *op1_start != '(' && *op1_start != ',' && *op1_start != ';') op1_start--;
+                if (*op1_start == '(' || *op1_start == ',' || *op1_start == ';') op1_start++;
+                
+                char* op2_start = p + 3;
+                while (*op2_start == ' ' || *op2_start == '\t') op2_start++;
+                char* op2_end = op2_start;
+                while (*op2_end && *op2_end != ' ' && *op2_end != '\t' && *op2_end != ';' && 
+                       *op2_end != ')' && *op2_end != ',' && *op2_end != '[') op2_end++;
+                
+                size_t op1_len = op1_end - op1_start + 1;
+                size_t op2_len = op2_end - op2_start;
+                size_t func_len = strlen(mul_func);
+                
+                char* new_body = malloc(strlen(body) + func_len + 10);
+                strncpy(new_body, body, op1_start - body);
+                sprintf(new_body + (op1_start - body), "%s(", mul_func);
+                strncpy(new_body + (op1_start - body) + func_len + 1, op1_start, op1_len);
+                strcpy(new_body + (op1_start - body) + func_len + 1 + op1_len, ", ");
+                strncpy(new_body + strlen(new_body), op2_start, op2_len);
+                strcpy(new_body + strlen(new_body), ")");
+                strcpy(new_body + strlen(new_body), op2_end);
+                
+                free(body);
+                body = new_body;
+                p = body + (op1_start - body) + func_len + 1 + op1_len + 2 + op2_len + 1;
+            }
+        }
+    }
 
-    /* BF16 类型定义和辅助函数 */
+    const char* extensions = vk_get_glsl_extension(dtype);
+    /* use_native 已在前面定义 */
+
+    /* BF16/FP16/INT8/INT16 类型定义和辅助函数 - 当使用模拟时需要 */
     const char* type_defs = "";
-    static char bf16_defs[1024];
-    if (dtype == ACE_DTYPE_BFLOAT16) {
-        snprintf(bf16_defs, sizeof(bf16_defs),
-            "/* BF16 辅助函数 - 使用 uint 避免 int16_t 参数问题 */\n"
-            "float bf16_to_f32(uint x) {\n"
-            "    int sign = int((x >> 15) & 0x1u);\n"
-            "    int exp = int((x >> 7) & 0xFFu);\n"
-            "    int man = int(x & 0x7Fu);\n"
+    static char type_defs_buf[4096];
+    
+    if (!use_native) {
+        /* 使用模拟实现 - 定义自定义类型和辅助函数 */
+        if (dtype == ACE_DTYPE_BFLOAT16) {
+            snprintf(type_defs_buf, sizeof(type_defs_buf),
+                "/* BF16 模拟 - 使用 uint 存储，提供转换和运算函数 */\n"
+                "float bf16_to_f32(uint x) {\n"
+                "    int sign = int((x >> 15) & 0x1u);\n"
+                "    int exp = int((x >> 7) & 0xFFu);\n"
+                "    int man = int(x & 0x7Fu);\n"
+                "    if (exp == 0) return sign != 0 ? -0.0 : 0.0;\n"
+                "    if (exp == 255) return sign != 0 ? -1.0/0.0 : 1.0/0.0;\n"
+                "    int result = (sign << 31) | ((exp + 112) << 23) | (man << 16);\n"
+                "    return uintBitsToFloat(uint(result));\n"
+                "}\n"
+                "uint f32_to_bf16(float x) {\n"
+                "    uint u = floatBitsToUint(x);\n"
+                "    uint sign = (u >> 16) & 0x8000u;\n"
+                "    uint exp = ((u >> 23) & 0xFFu) - 112u;\n"
+                "    uint man = (u >> 16) & 0x7Fu;\n"
+                "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
+                "    if (exp > 254u) return sign | 0x7F80u;\n"
+                "    return sign | (exp << 7u) | man;\n"
+                "}\n"
+                "/* BF16 运算 - 转换为 float 计算后转回 */\n"
+                "uint bf16_add(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
+                "uint bf16_mul(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
+                "uint bf16_sub(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) - bf16_to_f32(b)); }\n"
+                "uint bf16_div(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) / bf16_to_f32(b)); }\n"
+                "/* 类型别名 - 使用 uint 作为底层存储 */\n"
+                "typedef uint bfloat16_t;\n");
+        } else if (dtype == ACE_DTYPE_FLOAT16) {
+            snprintf(type_defs_buf, sizeof(type_defs_buf),
+                "/* FP16 模拟 - 使用 uint 存储，提供转换和运算函数 */\n"
+                "float f16_to_f32(uint x) {\n"
+                "    int sign = int((x >> 15) & 0x1u);\n"
+                "    int exp = int((x >> 10) & 0x1Fu);\n"
+                "    int man = int(x & 0x3FFu);\n"
+                "    if (exp == 0) return sign != 0 ? -0.0 : 0.0;\n"
+                "    if (exp == 31) return sign != 0 ? -1.0/0.0 : 1.0/0.0;\n"
+                "    int result = (sign << 31) | ((exp + 112) << 23) | (man << 13);\n"
+                "    return uintBitsToFloat(uint(result));\n"
+                "}\n"
+                "uint f32_to_f16(float x) {\n"
+                "    uint u = floatBitsToUint(x);\n"
+                "    uint sign = (u >> 16) & 0x8000u;\n"
+                "    uint exp = ((u >> 23) & 0xFFu) - 112u;\n"
+                "    uint man = (u >> 13) & 0x3FFu;\n"
+                "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
+                "    if (exp > 30u) return sign | 0x7C00u;\n"
+                "    return sign | (exp << 10u) | man;\n"
+                "}\n"
+                "/* FP16 运算 */\n"
+                "uint f16_add(uint a, uint b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
+                "uint f16_mul(uint a, uint b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
+                "uint f16_sub(uint a, uint b) { return f32_to_f16(f16_to_f32(a) - f16_to_f32(b)); }\n"
+                "uint f16_div(uint a, uint b) { return f32_to_f16(f16_to_f32(a) / f16_to_f32(b)); }\n"
+                "/* 类型别名 */\n"
+                "typedef uint half;\n");
+        } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
+            snprintf(type_defs_buf, sizeof(type_defs_buf),
+                "/* INT8/UINT8 模拟 - 使用 uint 存储，低 8 位有效 */\n"
+                "uint int8_add(uint a, uint b) { return (a + b) & 0xFFu; }\n"
+                "uint int8_mul(uint a, uint b) { return (a * b) & 0xFFu; }\n"
+                "uint int8_sub(uint a, uint b) { return (a - b) & 0xFFu; }\n"
+                "typedef uint int8_t;\n");
+        } else if (dtype == ACE_DTYPE_INT16) {
+            snprintf(type_defs_buf, sizeof(type_defs_buf),
+                "/* INT16 模拟 - 使用 uint 存储，低 16 位有效 */\n"
+                "uint int16_add(uint a, uint b) { return (a + b) & 0xFFFFu; }\n"
+                "uint int16_mul(uint a, uint b) { return (a * b) & 0xFFFFu; }\n"
+                "uint int16_sub(uint a, uint b) { return (a - b) & 0xFFFFu; }\n"
+                "typedef uint int16_t;\n");
+        }
+        type_defs = type_defs_buf;
+    } else if (dtype == ACE_DTYPE_BFLOAT16) {
+        /* 原生 BF16 支持 */
+        snprintf(type_defs_buf, sizeof(type_defs_buf),
+            "/* 原生 BF16 辅助函数 */\n"
+            "float bf16_to_f32(bfloat16_t x) {\n"
+            "    int sign = int((uint(x) >> 15) & 0x1u);\n"
+            "    int exp = int((uint(x) >> 7) & 0xFFu);\n"
+            "    int man = int(uint(x) & 0x7Fu);\n"
             "    if (exp == 0) return sign != 0 ? -0.0 : 0.0;\n"
             "    if (exp == 255) return sign != 0 ? -1.0/0.0 : 1.0/0.0;\n"
             "    int result = (sign << 31) | ((exp + 112) << 23) | (man << 16);\n"
             "    return uintBitsToFloat(uint(result));\n"
-            "}\n"
-            "uint f32_to_bf16(float x) {\n"
-            "    uint u = floatBitsToUint(x);\n"
-            "    uint sign = (u >> 16) & 0x8000u;\n"
-            "    uint exp = ((u >> 23) & 0xFFu) - 112u;\n"
-            "    uint man = (u >> 16) & 0x7Fu;\n"
-            "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
-            "    if (exp > 254u) return sign | 0x7F80u;\n"
-            "    return sign | (exp << 7u) | man;\n"
             "}\n");
-        type_defs = bf16_defs;
-    } else if (dtype == ACE_DTYPE_FLOAT16) {
-        type_defs = "";
+        type_defs = type_defs_buf;
     }
 
     size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + strlen(type_defs) + strlen(body);
@@ -321,10 +480,10 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     snprintf(out, len,
         "#version 450\n"
         "%s"
+        "%s"
+        "%s"
+        "%s"
         "layout(local_size_x = 256) in;\n"
-        "%s"
-        "%s"
-        "%s"
         "%s"
         "#define GID int(gl_GlobalInvocationID.x)\n"
         "#define LID int(gl_LocalInvocationID.x)\n"
