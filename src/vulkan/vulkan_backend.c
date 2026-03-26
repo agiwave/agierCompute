@@ -733,7 +733,7 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     /* Find device from first buffer */
     vk_device_t* vk_dev = NULL;
     for (int i = 0; i < n; i++) {
-        if (sizes[i] == ACE_ARG_BUFFER) {
+        if (sizes[i] <= 0) {
             vk_buffer_t* buf = (vk_buffer_t*)args[i];
             if (buf && buf->dev) { vk_dev = buf->dev; break; }
         }
@@ -751,7 +751,7 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         memset(writes, 0, sizeof(writes));
 
         for (int i = 0; i < n && buf_idx < k->n_buffers && buf_idx < 8; i++) {
-            if (sizes[i] == ACE_ARG_BUFFER) {
+            if (sizes[i] <= 0) {
                 vk_buffer_t* buf = (vk_buffer_t*)args[i];
                 buf_infos[buf_idx].buffer = buf->buffer;
                 buf_infos[buf_idx].offset = 0;
@@ -772,7 +772,7 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     /* Push constants - 第一个参数 n 总是 int，后续参数根据内核类型 */
     int push_count = 0;
     for (int i = 0; i < n && push_count < k->n_scalars && push_count < 8; i++) {
-        if (sizes[i] == ACE_ARG_VALUE) {
+        if (sizes[i] > 0) {
             /* 第一个标量参数 (n) 总是 int，后续根据内核类型 */
             if (push_count == 0) {
                 push_values[push_count].i = *(int*)args[i];

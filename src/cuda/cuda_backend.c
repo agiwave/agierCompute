@@ -443,7 +443,7 @@ static ace_error_t cuda_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     CUdeviceptr ptr_values[16];
     
     for (int i = 0; i < n && i < 16; i++) {
-        if (sizes[i] == ACE_ARG_BUFFER) {
+        if (sizes[i] <= 0) {
             cuda_buffer_t* buf = (cuda_buffer_t*)args[i];
             ptr_values[i] = buf->ptr;
             kernel_args[i] = &ptr_values[i];

@@ -484,7 +484,7 @@ static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
 
     /* 设置参数 */
     for (int i = 0; i < n; i++) {
-        if (sizes[i] == ACE_ARG_BUFFER) {
+        if (sizes[i] <= 0) {
             ocl_buffer_t* buf = (ocl_buffer_t*)args[i];
             if (!buf || !buf->mem) {
                 return ACE_ERROR_LAUNCH;

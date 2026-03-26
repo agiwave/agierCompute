@@ -66,8 +66,6 @@ int main() {
         ace_buffer_write(buf_b, h_b, N * sizeof(float));
 
         int n = N;
-        void* args[] = {&n, buf_a, buf_b, buf_c};
-        int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
 
         ace_error_t err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
         ace_finish(dev);
@@ -104,8 +102,6 @@ int main() {
         ace_buffer_write(buf_in, h_in, N * sizeof(float));
 
         int n = N;
-        void* args[] = {&n, &alpha, buf_in, buf_out};
-        int types[] = {ACE_VAL, ACE_VAL, ACE_BUF, ACE_BUF};
 
         ace_error_t err = ACE_INVOKE(dev, scale, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
         ace_finish(dev);

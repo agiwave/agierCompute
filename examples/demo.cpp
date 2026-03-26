@@ -53,9 +53,9 @@ void test_vec_add_float(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0, 0};
     
-    ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
     ace_finish(dev);
     
     ace_buffer_read(buf_c, h_c, N * sizeof(float));
@@ -90,9 +90,9 @@ void test_vec_add_int(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0, 0};
     
-    ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_INT32, N, args, types, 4);
+    ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_INT32, N, args, sizes, 4);
     ace_finish(dev);
     
     ace_buffer_read(buf_c, h_c, N * sizeof(int));
@@ -124,9 +124,9 @@ void test_scale(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, &alpha, buf_in, buf_out};
-    int types[] = {ACE_VAL, ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), sizeof(float), 0, 0};
     
-    ace_error_t err = ace_kernel_invoke(dev, _ace_get_scale(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+    ace_error_t err = ace_kernel_invoke(dev, _ace_get_scale(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
     ace_finish(dev);
     
     ace_buffer_read(buf_out, h_out, N * sizeof(float));
@@ -156,9 +156,9 @@ void test_relu(ace_device_t dev) {
     
     int n = N;
     void* args[] = {&n, buf_in, buf_out};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF};
+    int sizes[] = {sizeof(int), 0, 0};
     
-    ace_error_t err = ace_kernel_invoke(dev, _ace_get_relu(), ACE_DTYPE_FLOAT32, N, args, types, 3);
+    ace_error_t err = ace_kernel_invoke(dev, _ace_get_relu(), ACE_DTYPE_FLOAT32, N, args, sizes, 3);
     ace_finish(dev);
     
     ace_buffer_read(buf_out, h_out, N * sizeof(float));

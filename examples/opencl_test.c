@@ -64,8 +64,6 @@ int main() {
 
     printf("\nCompiling kernel...\n");
     int n = N;
-    void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
 
     printf("Launching kernel...\n");
     err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);

@@ -388,7 +388,7 @@ static kernel_template_t* get_template(ace_kernel_t kernel) {
 
 ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
                                ace_dtype_t dtype, size_t n,
-                               void** args, int* types, int nargs) {
+                               void** args, int* sizes, int nargs) {
     if (!dev || !kernel) return ACE_ERROR_INVALID;
     if (!dev->backend || !dev->backend->ops.kernel_launch) {
         return ACE_ERROR_BACKEND;
@@ -399,21 +399,20 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
 
     /* 处理参数，找到第一个 buffer 所属的设备 */
     void* processed_args[16];
-    size_t sizes[16];
     ace_device_t actual_dev = dev;
 
     if (nargs > 16) nargs = 16;
     for (int i = 0; i < nargs; i++) {
-        if (types[i] == ACE_BUF) {
+        if (sizes[i] <= 0) {
+            /* 缓冲区参数 */
             struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
             processed_args[i] = buf ? buf->ptr : NULL;
-            sizes[i] = ACE_ARG_BUFFER;
             if (buf && buf->dev && actual_dev == dev) {
                 actual_dev = buf->dev;
             }
         } else {
+            /* 标量参数 */
             processed_args[i] = args[i];
-            sizes[i] = ACE_ARG_VALUE;
         }
     }
 
@@ -435,7 +434,7 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
 
 ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
                                ace_dtype_t dtype, ace_launch_config_t* config,
-                               void** args, int* types, int nargs) {
+                               void** args, int* sizes, int nargs) {
     if (!dev || !kernel) return ACE_ERROR_INVALID;
     if (!dev->backend || !dev->backend->ops.kernel_launch) {
         return ACE_ERROR_BACKEND;
@@ -446,21 +445,18 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
 
     /* 处理参数 */
     void* processed_args[16];
-    size_t sizes[16];
     ace_device_t actual_dev = dev;
 
     if (nargs > 16) nargs = 16;
     for (int i = 0; i < nargs; i++) {
-        if (types[i] == ACE_BUF) {
+        if (sizes[i] <= 0) {
             struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
             processed_args[i] = buf ? buf->ptr : NULL;
-            sizes[i] = ACE_ARG_BUFFER;
             if (buf && buf->dev && actual_dev == dev) {
                 actual_dev = buf->dev;
             }
         } else {
             processed_args[i] = args[i];
-            sizes[i] = ACE_ARG_VALUE;
         }
     }
 

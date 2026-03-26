@@ -38,25 +38,10 @@ int test_device(ace_device_t dev, int idx) {
     ace_buffer_write(buf_a, h_a, N * sizeof(float));
     ace_buffer_write(buf_b, h_b, N * sizeof(float));
 
-    int n = N;
-    void* args[] = {&n, buf_a, buf_b, buf_c};
-    int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-
     printf("  Running kernel... ");
     fflush(stdout);
 
-    ace_error_t err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
-
-    if (err != ACE_OK) {
-        printf("FAILED (err=%d)\n", err);
-        ace_finish(dev);
-        free(h_a); free(h_b); free(h_c);
-        ace_buffer_free(buf_a);
-        ace_buffer_free(buf_b);
-        ace_buffer_free(buf_c);
-        ace_device_release(dev);
-        return 0;
-    }
+    ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
 
     printf("OK\n");
     ace_finish(dev);
