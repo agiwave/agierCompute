@@ -670,27 +670,27 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         int scalar_idx = 0;
         for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
             if (sizes[i] == ACE_ARG_VALUE) {
-                /* 传递 int 值或 float 的位模式 */
                 scalars[scalar_idx] = *(int*)args[i];
                 scalar_idx++;
             }
         }
     }
 
-    /* Command buffer */
+    /* 使用命令池直接执行（避免分配开销） */
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+    };
+    
+    /* 从命令池分配临时命令缓冲区 */
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkCommandBufferAllocateInfo cmd_alloc = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = vk_dev->cmd_pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1
     };
-    VkCommandBuffer cmd;
     vkAllocateCommandBuffers(vk_dev->device, &cmd_alloc, &cmd);
-
-    VkCommandBufferBeginInfo begin_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-    };
     vkBeginCommandBuffer(cmd, &begin_info);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k->pipeline);
