@@ -17,6 +17,21 @@
  * Internal structures
  * ============================================================================ */
 
+/* 内核缓存：每个设备一个哈希表 */
+#define KERNEL_CACHE_SIZE 256
+
+typedef struct ocl_kernel_s {
+    int id;                /* 内核 ID */
+    cl_kernel kernel;
+    cl_program program;
+    char* name;
+    struct ocl_kernel_s* next;  /* 用于哈希表链式处理 */
+} ocl_kernel_t;
+
+typedef struct {
+    ocl_kernel_t* buckets[KERNEL_CACHE_SIZE];
+} ocl_kernel_cache_t;
+
 typedef struct {
     cl_device_id device;
     cl_context context;
@@ -25,19 +40,13 @@ typedef struct {
     size_t total_mem;
     int compute_units;
     int max_threads;
+    ocl_kernel_cache_t kernel_cache;  /* 内核缓存 */
 } ocl_device_t;
 
 typedef struct {
     cl_mem mem;
     size_t size;
 } ocl_buffer_t;
-
-typedef struct {
-    cl_kernel kernel;
-    cl_program program;
-    char* name;
-    ocl_device_t* device;
-} ocl_kernel_t;
 
 static cl_platform_id g_platform;
 
@@ -225,7 +234,10 @@ static ace_error_t ocl_device_get(int idx, void** dev) {
         free(d);
         return ACE_ERROR_DEVICE;
     }
-    
+
+    /* 初始化内核缓存 */
+    memset(&d->kernel_cache, 0, sizeof(d->kernel_cache));
+
     *dev = d;
     return ACE_OK;
 }
@@ -233,6 +245,18 @@ static ace_error_t ocl_device_get(int idx, void** dev) {
 static void ocl_device_release(void* dev) {
     ocl_device_t* d = (ocl_device_t*)dev;
     if (d) {
+        /* 释放内核缓存 */
+        for (int i = 0; i < KERNEL_CACHE_SIZE; i++) {
+            ocl_kernel_t* k = d->kernel_cache.buckets[i];
+            while (k) {
+                ocl_kernel_t* next = k->next;
+                if (k->kernel) clReleaseKernel(k->kernel);
+                if (k->program) clReleaseProgram(k->program);
+                free(k->name);
+                free(k);
+                k = next;
+            }
+        }
         if (d->queue) clReleaseCommandQueue(d->queue);
         if (d->context) clReleaseContext(d->context);
         free(d);
@@ -295,118 +319,69 @@ static ace_error_t ocl_finish(void* dev) {
     return (clFinish(d->queue) == CL_SUCCESS) ? ACE_OK : ACE_ERROR_LAUNCH;
 }
 
-static ace_error_t ocl_kernel_compile(void* dev, const char* name, const char* src,
-                                       void** kernel, char** err_msg) {
-    ocl_device_t* d = (ocl_device_t*)dev;
-
-    /* 确定数据类型 */
-    const char* type_name = "float";
-    const char* suffix = strrchr(name, '_');
-    if (suffix) {
-        suffix++;
-        if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
-        else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
-        else if (strcmp(suffix, "long") == 0 || strcmp(suffix, "int64") == 0) type_name = "long";
-        else if (strcmp(suffix, "half") == 0 || strcmp(suffix, "float16") == 0) type_name = "half";
-        else if (strcmp(suffix, "char") == 0 || strcmp(suffix, "int8") == 0) type_name = "char";
-        else if (strcmp(suffix, "uchar") == 0 || strcmp(suffix, "uint8") == 0) type_name = "uchar";
-        else if (strcmp(suffix, "short") == 0 || strcmp(suffix, "int16") == 0) type_name = "short";
-    }
-
-    char* translated = translate_to_opencl(name, src, type_name);
-    
-    cl_int err;
-    const char* srcs[1] = { translated };
-    size_t lens[1] = { strlen(translated) };
-    
-    cl_program prog = clCreateProgramWithSource(d->context, 1, srcs, lens, &err);
-    if (err != CL_SUCCESS) {
-        free(translated);
-        return ACE_ERROR_COMPILE;
-    }
-    
-    err = clBuildProgram(prog, 1, &d->device, NULL, NULL, NULL);
-    if (err != CL_SUCCESS) {
-        size_t log_size;
-        clGetProgramBuildInfo(prog, d->device, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
-        if (err_msg) {
-            *err_msg = (char*)malloc(log_size + 1);
-            clGetProgramBuildInfo(prog, d->device, CL_PROGRAM_BUILD_LOG, log_size, *err_msg, NULL);
-        }
-        clReleaseProgram(prog);
-        free(translated);
-        return ACE_ERROR_COMPILE;
-    }
-    
-    cl_kernel krn = clCreateKernel(prog, name, &err);
-    if (err != CL_SUCCESS) {
-        clReleaseProgram(prog);
-        free(translated);
-        if (err_msg) *err_msg = strdup("Failed to create kernel");
-        return ACE_ERROR_COMPILE;
-    }
-    
-    free(translated);
-    
-    ocl_kernel_t* k = (ocl_kernel_t*)calloc(1, sizeof(*k));
-    k->kernel = krn;
-    k->program = prog;
-    k->name = strdup(name);
-    k->device = d;
-    
-    *kernel = k;
-    return ACE_OK;
-}
-
-static void ocl_kernel_release(void* kernel) {
-    ocl_kernel_t* k = (ocl_kernel_t*)kernel;
-    if (k) {
-        if (k->kernel) clReleaseKernel(k->kernel);
-        if (k->program) clReleaseProgram(k->program);
-        free(k->name);
-        free(k);
-    }
-}
-
 static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
                                       ace_launch_config_t* cfg, void** args, size_t* sizes, int n) {
     ocl_device_t* d = (ocl_device_t*)dev;
     if (!d || !d->queue) return ACE_ERROR_LAUNCH;
 
-    /* 查找缓存的内核（简化：每次重新编译，实际应该缓存） */
-    const char* type_name = "float";
-    const char* suffix = strrchr(kernel_def->name, '_');
-    if (suffix) {
-        suffix++;
-        if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
-        else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
+    /* 查找缓存的内核 */
+    int bucket = kernel_def->id % KERNEL_CACHE_SIZE;
+    ocl_kernel_t* cached = d->kernel_cache.buckets[bucket];
+    while (cached) {
+        if (cached->id == kernel_def->id) {
+            break;  /* 找到缓存 */
+        }
+        cached = cached->next;
     }
 
-    char* translated = translate_to_opencl(kernel_def->name, kernel_def->src, type_name);
+    /* 如果未缓存，编译内核 */
+    if (!cached) {
+        const char* type_name = "float";
+        const char* suffix = strrchr(kernel_def->name, '_');
+        if (suffix) {
+            suffix++;
+            if (strcmp(suffix, "int") == 0 || strcmp(suffix, "int32") == 0) type_name = "int";
+            else if (strcmp(suffix, "double") == 0 || strcmp(suffix, "float64") == 0) type_name = "double";
+        }
 
-    cl_int err;
-    const char* srcs[1] = { translated };
-    size_t lens[1] = { strlen(translated) };
+        char* translated = translate_to_opencl(kernel_def->name, kernel_def->src, type_name);
 
-    cl_program prog = clCreateProgramWithSource(d->context, 1, srcs, lens, &err);
-    if (err != CL_SUCCESS) {
+        cl_int err;
+        const char* srcs[1] = { translated };
+        size_t lens[1] = { strlen(translated) };
+
+        cl_program prog = clCreateProgramWithSource(d->context, 1, srcs, lens, &err);
+        if (err != CL_SUCCESS) {
+            free(translated);
+            return ACE_ERROR_COMPILE;
+        }
+
+        err = clBuildProgram(prog, 1, &d->device, NULL, NULL, NULL);
+        if (err != CL_SUCCESS) {
+            clReleaseProgram(prog);
+            free(translated);
+            return ACE_ERROR_COMPILE;
+        }
+
+        cl_kernel krn = clCreateKernel(prog, kernel_def->name, &err);
         free(translated);
-        return ACE_ERROR_COMPILE;
-    }
 
-    err = clBuildProgram(prog, 1, &d->device, NULL, NULL, NULL);
-    if (err != CL_SUCCESS) {
-        clReleaseProgram(prog);
-        free(translated);
-        return ACE_ERROR_COMPILE;
-    }
+        if (err != CL_SUCCESS) {
+            clReleaseProgram(prog);
+            return ACE_ERROR_COMPILE;
+        }
 
-    cl_kernel krn = clCreateKernel(prog, kernel_def->name, &err);
-    clReleaseProgram(prog);
-    free(translated);
-    
-    if (err != CL_SUCCESS) {
-        return ACE_ERROR_COMPILE;
+        /* 创建缓存条目 */
+        ocl_kernel_t* k = (ocl_kernel_t*)calloc(1, sizeof(*k));
+        k->id = kernel_def->id;
+        k->name = strdup(kernel_def->name);
+        k->kernel = krn;
+        k->program = prog;
+
+        /* 添加到缓存 */
+        k->next = d->kernel_cache.buckets[bucket];
+        d->kernel_cache.buckets[bucket] = k;
+        cached = k;
     }
 
     /* 设置参数 */
@@ -414,25 +389,19 @@ static ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         if (sizes[i] == ACE_ARG_BUFFER) {
             ocl_buffer_t* buf = (ocl_buffer_t*)args[i];
             if (!buf || !buf->mem) {
-                clReleaseKernel(krn);
                 return ACE_ERROR_LAUNCH;
             }
-            err = clSetKernelArg(krn, i, sizeof(cl_mem), &buf->mem);
+            clSetKernelArg(cached->kernel, i, sizeof(cl_mem), &buf->mem);
         } else {
-            err = clSetKernelArg(krn, i, sizeof(int), args[i]);
-        }
-        if (err != CL_SUCCESS) {
-            clReleaseKernel(krn);
-            return ACE_ERROR_LAUNCH;
+            clSetKernelArg(cached->kernel, i, sizeof(int), args[i]);
         }
     }
 
     size_t global[3] = { cfg->grid[0] * cfg->block[0], cfg->grid[1] * cfg->block[1], cfg->grid[2] * cfg->block[2] };
     size_t local[3] = { cfg->block[0], cfg->block[1], cfg->block[2] };
 
-    err = clEnqueueNDRangeKernel(d->queue, krn, 3, NULL, global, local, 0, NULL, NULL);
-    clReleaseKernel(krn);
-    
+    cl_int err = clEnqueueNDRangeKernel(d->queue, cached->kernel, 3, NULL, global, local, 0, NULL, NULL);
+
     return (err == CL_SUCCESS) ? ACE_OK : ACE_ERROR_LAUNCH;
 }
 

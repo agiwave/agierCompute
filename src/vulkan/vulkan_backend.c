@@ -432,22 +432,17 @@ static ace_error_t vk_kernel_compile(void* dev, const char* name, const char* sr
         return ACE_OK;
     }
 
-    /* 编译新内核 */
+    /* 编译新内核 - 使用 kernel_def 中的 dtype */
     if (d->kernel_count >= MAX_CACHED_KERNELS) {
         if (err_msg) *err_msg = strdup("Kernel cache full");
         return ACE_ERROR_MEM;
     }
 
-    ace_dtype_t dtype = ACE_DTYPE_FLOAT32;
-    const char* suffix = strrchr(name, '_');
-    if (suffix) {
-        suffix++;
-        if (strcmp(suffix, "int") == 0) dtype = ACE_DTYPE_INT32;
-        else if (strcmp(suffix, "double") == 0) dtype = ACE_DTYPE_FLOAT64;
-    }
+    /* 从 kernel_def 获取数据类型 */
+    ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
 
     int n_buffers = 0, n_scalars = 0;
-    char* glsl = translate_to_glsl(name, src, dtype, &n_buffers, &n_scalars);
+    char* glsl = translate_to_glsl(kernel_def->name, kernel_def->src, dtype, &n_buffers, &n_scalars);
 
     shaderc_compilation_result_t result = shaderc_compile_into_spv(
         g_shaderc, glsl, strlen(glsl), shaderc_compute_shader, name, "main", NULL);
@@ -659,15 +654,16 @@ static ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
         free(buf_infos);
     }
 
-    /* Push constants */
+    /* Push constants - 确保 4 字节对齐 */
+    /* 注意：GLSL 中使用 float 类型，所以传递 float 值 */
     float* scalars = NULL;
     if (k->n_scalars > 0) {
         scalars = (float*)calloc(k->n_scalars, sizeof(float));
         int scalar_idx = 0;
         for (int i = 0; i < n && scalar_idx < k->n_scalars; i++) {
             if (sizes[i] == ACE_ARG_VALUE) {
-                int ival = *(int*)args[i];
-                scalars[scalar_idx] = (float)ival;
+                /* 传递 float 值（与 GLSL 类型匹配） */
+                scalars[scalar_idx] = *(float*)args[i];
                 scalar_idx++;
             }
         }
