@@ -61,26 +61,34 @@ static ace_test_result_t test_vec_add_dtype(ace_device_t dev, void* user_data) {
     dtype_config_t* cfg = (dtype_config_t*)user_data;
     const int N = 100;
     size_t bytes = N * cfg->elem_size;
-    
+
     void *h_a = malloc(bytes), *h_b = malloc(bytes), *h_c = malloc(bytes);
     memset(h_c, 0, bytes);
     
-    /* 初始化数据 - 使用 int32 作为通用表示 */
-    int32_t *a32 = h_a, *b32 = h_b;
-    for (int i = 0; i < N; i++) { a32[i] = i; b32[i] = i * 2; }
-    
+    /* 根据数据类型初始化数据 */
+    if (cfg->dtype == ACE_DTYPE_FLOAT32) {
+        float *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = i; b[i] = i * 2; }
+    } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
+        double *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = i; b[i] = i * 2; }
+    } else {
+        int32_t *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = i; b[i] = i * 2; }
+    }
+
     ace_buffer_t buf_a, buf_b, buf_c;
     ace_buffer_alloc(dev, bytes, &buf_a);
     ace_buffer_alloc(dev, bytes, &buf_b);
     ace_buffer_alloc(dev, bytes, &buf_c);
-    
+
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
-    
+
     int n = N;
     void* args[] = {&n, buf_a, buf_b, buf_c};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-    
+
     ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_add(), cfg->dtype, N, args, types, 4);
     if (err != ACE_OK) {
         printf("INVOKE_ERROR(%d)\n", err);
@@ -88,23 +96,37 @@ static ace_test_result_t test_vec_add_dtype(ace_device_t dev, void* user_data) {
         ace_buffer_free(buf_a); ace_buffer_free(buf_b); ace_buffer_free(buf_c);
         return ACE_TEST_FAIL;
     }
-    
+
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);
-    
-    /* 验证结果 - 简单检查前 10 个元素 */
-    int32_t *c32 = h_c;
+
+    /* 验证结果 */
     int ok = 1;
-    for (int i = 0; i < 10 && ok; i++) {
-        int32_t expected = a32[i] + b32[i];
-        if (c32[i] != expected) ok = 0;
+    if (cfg->dtype == ACE_DTYPE_FLOAT32) {
+        float *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            float expected = a[i] + b[i];
+            if (fabs(c[i] - expected) > 1e-5f) ok = 0;
+        }
+    } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
+        double *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            double expected = a[i] + b[i];
+            if (fabs(c[i] - expected) > 1e-10) ok = 0;
+        }
+    } else {
+        int32_t *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            int32_t expected = a[i] + b[i];
+            if (c[i] != expected) ok = 0;
+        }
     }
-    
+
     printf("%s\n", ok ? "OK" : "FAIL");
-    
+
     free(h_a); free(h_b); free(h_c);
     ace_buffer_free(buf_a); ace_buffer_free(buf_b); ace_buffer_free(buf_c);
-    
+
     return ok ? ACE_TEST_PASS : ACE_TEST_FAIL;
 }
 
@@ -112,26 +134,34 @@ static ace_test_result_t test_vec_mul_dtype(ace_device_t dev, void* user_data) {
     dtype_config_t* cfg = (dtype_config_t*)user_data;
     const int N = 100;
     size_t bytes = N * cfg->elem_size;
-    
+
     void *h_a = malloc(bytes), *h_b = malloc(bytes), *h_c = malloc(bytes);
     memset(h_c, 0, bytes);
     
-    /* 初始化数据 */
-    int32_t *a32 = h_a, *b32 = h_b;
-    for (int i = 0; i < N; i++) { a32[i] = i; b32[i] = i + 1; }
-    
+    /* 根据数据类型初始化数据 */
+    if (cfg->dtype == ACE_DTYPE_FLOAT32) {
+        float *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = i; b[i] = i + 1; }
+    } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
+        double *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = i; b[i] = i + 1; }
+    } else {
+        int32_t *a = h_a, *b = h_b;
+        for (int i = 0; i < N; i++) { a[i] = i; b[i] = i + 1; }
+    }
+
     ace_buffer_t buf_a, buf_b, buf_c;
     ace_buffer_alloc(dev, bytes, &buf_a);
     ace_buffer_alloc(dev, bytes, &buf_b);
     ace_buffer_alloc(dev, bytes, &buf_c);
-    
+
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
-    
+
     int n = N;
     void* args[] = {&n, buf_a, buf_b, buf_c};
     int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-    
+
     ace_error_t err = ace_kernel_invoke(dev, _ace_get_vec_mul(), cfg->dtype, N, args, types, 4);
     if (err != ACE_OK) {
         printf("INVOKE_ERROR(%d)\n", err);
@@ -139,23 +169,37 @@ static ace_test_result_t test_vec_mul_dtype(ace_device_t dev, void* user_data) {
         ace_buffer_free(buf_a); ace_buffer_free(buf_b); ace_buffer_free(buf_c);
         return ACE_TEST_FAIL;
     }
-    
+
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);
-    
+
     /* 验证结果 */
-    int32_t *c32 = h_c;
     int ok = 1;
-    for (int i = 0; i < 10 && ok; i++) {
-        int32_t expected = a32[i] * b32[i];
-        if (c32[i] != expected) ok = 0;
+    if (cfg->dtype == ACE_DTYPE_FLOAT32) {
+        float *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            float expected = a[i] * b[i];
+            if (fabs(c[i] - expected) > 1e-5f) ok = 0;
+        }
+    } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
+        double *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            double expected = a[i] * b[i];
+            if (fabs(c[i] - expected) > 1e-10) ok = 0;
+        }
+    } else {
+        int32_t *a = h_a, *b = h_b, *c = h_c;
+        for (int i = 0; i < 10 && ok; i++) {
+            int32_t expected = a[i] * b[i];
+            if (c[i] != expected) ok = 0;
+        }
     }
-    
+
     printf("%s\n", ok ? "OK" : "FAIL");
-    
+
     free(h_a); free(h_b); free(h_c);
     ace_buffer_free(buf_a); ace_buffer_free(buf_b); ace_buffer_free(buf_c);
-    
+
     return ok ? ACE_TEST_PASS : ACE_TEST_FAIL;
 }
 

@@ -256,11 +256,14 @@ static inline ace_launch_config_t ace_launch_3d(size_t nx, size_t ny, size_t nz,
 #define ACE_ARG_COUNT_(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, N, ...) N
 
 /* ACE_INVOKE 内部宏 - 构建参数数组并调用 */
+/* 注意：第一个参数通常是 int n (ACE_VAL)，其余是 buffer (ACE_BUF) */
 #define ACE_INVOKE_IMPL(dev, kernel_name, dtype, n, ...) do { \
     void* _args[] = {__VA_ARGS__}; \
     int _nargs = sizeof(_args) / sizeof(_args[0]); \
     int _types[16]; \
-    for (int _i = 0; _i < _nargs && _i < 16; _i++) _types[_i] = ACE_BUF; \
+    for (int _i = 0; _i < _nargs && _i < 16; _i++) { \
+        _types[_i] = (_i == 0) ? ACE_VAL : ACE_BUF; \
+    } \
     ace_kernel_invoke(dev, _ace_get_##kernel_name(), ACE_DTYPE_##dtype, n, _args, _types, _nargs); \
 } while(0)
 
