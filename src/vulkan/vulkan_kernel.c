@@ -145,7 +145,7 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
         return ACE_ERROR_COMPILE;
     }
 
-    /* 创建 Pipeline Layout */
+    /* 创建 Pipeline Layout - 需要预先计算 push constants 的大小 */
     VkPushConstantRange pc_range = {0};
     VkPipelineLayoutCreateInfo pl_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -156,7 +156,40 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
     if (*n_scalars > 0) {
         pc_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         pc_range.offset = 0;
-        pc_range.size = (*n_scalars) * sizeof(int);
+        /* 计算 push constants 大小，考虑 8 字节对齐 */
+        /* 第一个参数总是 int (4 字节)，后续参数根据 GLSL 类型可能是 2/4/8 字节 */
+        size_t total_size = 0;
+        for (int i = 0; i < *n_scalars; i++) {
+            if (i == 0) {
+                /* 第一个参数是 int */
+                total_size += 4;
+            } else {
+                /* 后续参数根据 dtype 确定大小 */
+                int dtype_size = 4;  /* 默认 4 字节 */
+                if (kernel_def->dtype == ACE_DTYPE_FLOAT64 || 
+                    kernel_def->dtype == ACE_DTYPE_INT64) {
+                    dtype_size = 8;
+                } else if (kernel_def->dtype == ACE_DTYPE_FLOAT16 ||
+                           kernel_def->dtype == ACE_DTYPE_BFLOAT16 ||
+                           kernel_def->dtype == ACE_DTYPE_INT8 ||
+                           kernel_def->dtype == ACE_DTYPE_UINT8) {
+                    dtype_size = 2;  /* 16 位类型 */
+                }
+                
+                if (dtype_size == 8) {
+                    /* 8 字节对齐 */
+                    total_size = (total_size + 7) & ~7;
+                    total_size += 8;
+                } else if (dtype_size == 2) {
+                    /* 2 字节类型，填充到 4 字节边界 */
+                    total_size = (total_size + 3) & ~3;
+                    total_size += 4;
+                } else {
+                    total_size += 4;
+                }
+            }
+        }
+        pc_range.size = total_size;
         pl_info.pushConstantRangeCount = 1;
         pl_info.pPushConstantRanges = &pc_range;
     }
@@ -281,7 +314,8 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     /* 使用静态数组避免 malloc 开销 */
     VkWriteDescriptorSet writes[8];
     VkDescriptorBufferInfo buf_infos[8];
-    union { int i; float f; } push_values[8];  /* push constants 值 - 支持 int 和 float */
+    uint8_t push_data[128];  /* push constants 数据缓冲区 */
+    size_t push_size = 0;
 
     /* 更新 descriptor sets */
     int buf_idx = 0;
@@ -308,12 +342,28 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     }
 
     /* Push constants - 第一个参数 n 总是 int，后续参数根据内核类型 */
-    int push_count = 0;
-    for (int i = 0; i < n && push_count < n_scalars && push_count < 8; i++) {
+    push_size = 0;
+    int scalar_idx = 0;
+    for (int i = 0; i < n && scalar_idx < n_scalars; i++) {
         if (sizes[i] > 0) {
-            /* 所有参数统一按 4 字节传递，shader 内部会正确解释 */
-            push_values[push_count].i = *(int*)args[i];
-            push_count++;
+            /* 根据参数大小正确复制数据，考虑对齐 */
+            if (sizes[i] == sizeof(double) || sizes[i] == sizeof(int64_t)) {
+                /* 8 字节类型需要 8 字节对齐 */
+                push_size = (push_size + 7) & ~7;
+                memcpy(&push_data[push_size], args[i], 8);
+                push_size += 8;
+            } else if (sizes[i] == 2) {
+                /* 2 字节类型，填充到 4 字节边界 */
+                push_size = (push_size + 3) & ~3;
+                memcpy(&push_data[push_size], args[i], 2);
+                memset(&push_data[push_size + 2], 0, 2);  /* 填充 0 */
+                push_size += 4;
+            } else {
+                /* 4 字节类型 */
+                memcpy(&push_data[push_size], args[i], sizes[i]);
+                push_size += sizes[i];
+            }
+            scalar_idx++;
         }
     }
 
@@ -342,11 +392,9 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             0, 1, &k->desc_set, 0, NULL);
     }
 
-    if (push_count > 0) {
-        /* 计算 push constants 大小：每个参数 4 字节对齐（Vulkan 要求） */
-        size_t push_size = push_count * 4;
+    if (push_size > 0) {
         vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT,
-            0, push_size, &push_values[0]);
+            0, push_size, push_data);
     }
 
     uint32_t groups = (uint32_t)((cfg->grid[0] * cfg->block[0] + 255) / 256);

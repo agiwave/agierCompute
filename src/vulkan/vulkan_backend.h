@@ -76,6 +76,10 @@ typedef struct {
     int has_16bit_storage;
     int has_8bit_storage;
     int has_bfloat16;
+    /* 64 位类型支持 */
+    int has_float64;      /* shaderFloat64 支持 */
+    int has_int64;        /* shaderInt64 支持 */
+    int has_64bit_storage; /* storageBuffer64BitAccess 支持 */
 } vk_device_features_t;
 
 /* ============================================================================

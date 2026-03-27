@@ -18,15 +18,9 @@
 #include <ctype.h>
 #include <vulkan/vulkan.h>
 #include "ace.h"
+#include "vulkan_backend.h"
 
-/* 设备特性（由 vulkan_device.c 提供） */
-typedef struct {
-    int has_fp16;
-    int has_int8;
-    int has_int16;
-    int has_16bit_storage;
-    int has_8bit_storage;
-} vk_device_features_t;
+/* 全局设备特性（由 vulkan_device_features.c 定义） */
 extern vk_device_features_t g_device_features;
 
 /* ============================================================================
@@ -39,11 +33,13 @@ static int vk_supports_native_kfunc(ace_dtype_t dtype) {
         case ACE_DTYPE_INT32:
             return 1;
         case ACE_DTYPE_FLOAT64:
-            return 1;  /* Vulkan 支持 float64 */
+            /* FLOAT64 需要 shaderFloat64 + 64bit storage 支持 */
+            return g_device_features.has_float64 && g_device_features.has_64bit_storage;
         case ACE_DTYPE_INT64:
-            return 1;
+            /* INT64 需要 shaderInt64 + 64bit storage 支持 */
+            return g_device_features.has_int64 && g_device_features.has_64bit_storage;
         case ACE_DTYPE_FLOAT16:
-            return g_device_features.has_fp16 && g_device_features.has_16bit_storage;
+            return g_device_features.has_float16 && g_device_features.has_16bit_storage;
         case ACE_DTYPE_BFLOAT16:
             return 0;  /* BF16 总是需要模拟 */
         case ACE_DTYPE_INT8:
@@ -64,10 +60,12 @@ static int vk_supports_native_kfunc(ace_dtype_t dtype) {
 const char* vk_get_buffer_type_name(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT32:  return "float";
-        case ACE_DTYPE_FLOAT64:  return "float64_t";
+        case ACE_DTYPE_FLOAT64:  return "double";  /* GLSL 中使用 double */
         case ACE_DTYPE_INT32:    return "int";
         case ACE_DTYPE_INT64:    return "int64_t";
-        case ACE_DTYPE_FLOAT16:  return "float16_t";
+        case ACE_DTYPE_FLOAT16:
+            /* 如果设备不支持原生 float16_t，使用 uint16_t 模拟 */
+            return vk_supports_native_kfunc(dtype) ? "float16_t" : "uint16_t";
         case ACE_DTYPE_BFLOAT16: return "uint16_t";
         case ACE_DTYPE_INT8:     return "int8_t";
         case ACE_DTYPE_UINT8:    return "uint8_t";
@@ -78,19 +76,28 @@ const char* vk_get_buffer_type_name(ace_dtype_t dtype) {
 
 const char* vk_get_glsl_extension(ace_dtype_t dtype) {
     int use_native = vk_supports_native_kfunc(dtype);
-    
+
     if (!use_native && (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16 ||
                         dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8 ||
-                        dtype == ACE_DTYPE_INT16)) {
+                        dtype == ACE_DTYPE_INT16 ||
+                        dtype == ACE_DTYPE_FLOAT64 || dtype == ACE_DTYPE_INT64)) {
         return "#extension GL_EXT_shader_explicit_arithmetic_types : require\n"
                "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n"
                "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
     }
-    
+
     switch (dtype) {
         case ACE_DTYPE_FLOAT16:
             return "#extension GL_EXT_shader_16bit_storage : require\n"
                    "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
+        case ACE_DTYPE_FLOAT64:
+            /* FLOAT64 使用通用扩展 */
+            return "#extension GL_EXT_shader_explicit_arithmetic_types : require\n"
+                   "#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require\n";
+        case ACE_DTYPE_INT64:
+            /* INT64 使用通用扩展 */
+            return "#extension GL_EXT_shader_explicit_arithmetic_types : require\n"
+                   "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
         case ACE_DTYPE_INT8:
             return "#extension GL_EXT_shader_8bit_storage : require\n"
                    "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
@@ -118,28 +125,32 @@ const char* vk_get_type_macros(ace_dtype_t dtype) {
  * ============================================================================ */
 
 static const char* get_type_definition(ace_dtype_t dtype) {
-    static char def_buf[4096];
+    static char def_buf[8192];
 
     if (dtype == ACE_DTYPE_FLOAT16 && !vk_supports_native_kfunc(dtype)) {
         snprintf(def_buf, sizeof(def_buf),
-            "/* FP16 模拟类型定义和转换函数 */\n"
-            "float f16_to_f32(uint16_t x) {\n"
-            "    uint sign = (x >> 15u) & 0x1u;\n"
-            "    uint exp = (x >> 10u) & 0x1Fu;\n"
-            "    uint man = x & 0x3FFu;\n"
-            "    if (exp == 0u) return sign != 0u ? -0.0 : 0.0;\n"
-            "    if (exp == 31u) return sign != 0u ? -1.0/0.0 : 1.0/0.0;\n"
-            "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 13u);\n"
-            "    return uintBitsToFloat(result);\n"
+            "/* FP16 模拟类型定义和转换函数 - 使用 uint16_t 存储 */\n"
+            "float f16_to_f32(uint16_t h) {\n"
+            "    uint sign = (h & 0x8000u) << 16u;\n"
+            "    uint exp = (h & 0x7C00u) >> 10u;\n"
+            "    uint frac = (h & 0x03FFu) << 13u;\n"
+            "    if (exp == 0u) {\n"
+            "        return (sign != 0u) ? -0.0 : 0.0;\n"
+            "    } else if (exp == 31u) {\n"
+            "        return (sign != 0u) ? -1.0/0.0 : 1.0/0.0;\n"
+            "    } else {\n"
+            "        exp += (127u - 15u);\n"
+            "    }\n"
+            "    return uintBitsToFloat(sign | (exp << 23u) | frac);\n"
             "}\n"
             "uint16_t f32_to_f16(float x) {\n"
             "    uint u = floatBitsToUint(x);\n"
             "    uint sign = (u >> 16u) & 0x8000u;\n"
             "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
-            "    uint man = (u >> 13u) & 0x3FFu;\n"
+            "    uint frac = (u >> 13u) & 0x3FFu;\n"
             "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
             "    if (exp > 30u) return uint16_t(sign | 0x7C00u);\n"
-            "    return uint16_t(sign | (exp << 10u) | man);\n"
+            "    return uint16_t(sign | (exp << 10u) | frac);\n"
             "}\n");
         return def_buf;
     } else if (dtype == ACE_DTYPE_BFLOAT16) {
@@ -162,6 +173,23 @@ static const char* get_type_definition(ace_dtype_t dtype) {
             "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
             "    if (exp == 255u) return uint16_t(sign | 0x7F80u);\n"
             "    return uint16_t(sign | (exp << 7u) | man);\n"
+            "}\n");
+        return def_buf;
+    } else if (dtype == ACE_DTYPE_FLOAT64) {
+        /* FLOAT64 使用 double 存储，但运算通过 float 模拟（因为某些设备不支持 double buffer）*/
+        snprintf(def_buf, sizeof(def_buf),
+            "/* FLOAT64 模拟：使用 double 类型 */\n");
+        return def_buf;
+    } else if (dtype == ACE_DTYPE_INT64) {
+        /* INT64 使用 int64_t 类型，但需要扩展支持，这里使用 uint64_t 模拟 */
+        snprintf(def_buf, sizeof(def_buf),
+            "/* INT64 模拟类型定义和转换函数 */\n"
+            "/* 使用 uint64_t 进行位运算，通过 double 转换 */\n"
+            "double i64_to_f64(int64_t x) {\n"
+            "    return double(x);\n"
+            "}\n"
+            "int64_t f64_to_i64(double x) {\n"
+            "    return int64_t(x);\n"
             "}\n");
         return def_buf;
     }
