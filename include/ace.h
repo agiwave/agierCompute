@@ -402,7 +402,7 @@ static inline const char* ace_error_string(ace_error_t err) {
     #include <cassert>
     #include <type_traits>
     struct KInvoker {
-        static const int MAX_INVOKE_ARGS = 20;
+        static const int MAX_INVOKE_ARGS = 16;
         enum EInvokeArgType {
             EBuffer,
             EDataPointer,

@@ -66,8 +66,11 @@ add_subdirectory(src/cuda)
 add_subdirectory(src/opencl)
 add_subdirectory(src/vulkan)
 
-# 示例和测试
+# 示例
 add_subdirectory(examples)
+
+# 测试
+add_subdirectory(tests)
 
 # =============================================================================
 # 安装配置
