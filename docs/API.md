@@ -487,17 +487,19 @@ ace_test_suite_run(&suite);
 │                   后端实现层                         │
 │  ┌──────────┬──────────┬──────────┬─────────────┐  │
 │  │   CUDA   │  OpenCL  │  Vulkan  │    CPU      │  │
-│  │ dtype_   │ dtype_   │ dtype_   │ (placeholder)│  │
+│  │ device-> │ device-> │ device-> │ (placeholder)│  │
+│  │ dtype_   │ dtype_   │ dtype_   │             │  │
 │  │ table    │ table    │ table    │             │  │
 │  │ ops_     │ ops_     │ ops_     │             │  │
 │  │ table    │ table    │ table    │             │  │
+│  │ (global) │ (global) │ (global) │             │  │
 │  └──────────┴──────────┴──────────┴─────────────┘  │
 └─────────────────────────────────────────────────────┘
 ```
 
 每个后端包含：
-- **数据类型表** (`*_dtype_table.h/c`): 定义所有支持的数据类型信息
-- **内核操作表** (`*_kernel_ops_table.h/c`): 定义所有内核操作
+- **数据类型表** (`*_dtype_table.h/c`): **设备级别**，根据设备能力动态初始化
+- **内核操作表** (`*_kernel_ops_table.h/c`): **全局唯一**，操作注入逻辑通用
 
 详见 [BACKEND_STATUS.md](BACKEND_STATUS.md)。
 

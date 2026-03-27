@@ -46,21 +46,24 @@
 │                   后端实现层                         │
 │  ┌──────────┬──────────┬──────────┬─────────────┐  │
 │  │   CUDA   │  OpenCL  │  Vulkan  │    CPU      │  │
-│  │ dtype_   │ dtype_   │ dtype_   │ (placeholder)│  │
+│  │ device-> │ device-> │ device-> │ (placeholder)│  │
+│  │ dtype_   │ dtype_   │ dtype_   │             │  │
 │  │ table    │ table    │ table    │             │  │
 │  │ ops_     │ ops_     │ ops_     │             │  │
 │  │ table    │ table    │ table    │             │  │
+│  │ (global) │ (global) │ (global) │             │  │
 │  └──────────┴──────────┴──────────┴─────────────┘  │
 └─────────────────────────────────────────────────────┘
 ```
 
 每个后端包含：
-- **数据类型表** (`*_dtype_table.h/c`): 定义所有支持的数据类型信息
+- **数据类型表** (`*_dtype_table.h/c`): **设备级别**，根据设备能力动态初始化
   - 类型名称、扩展、转换函数、宏定义
   - 根据设备能力自动判断是否需要模拟实现
-- **内核操作表** (`*_kernel_ops_table.h/c`): 定义所有内核操作
+  - 每个设备有独立的类型表实例
+- **内核操作表** (`*_kernel_ops_table.h/c`): **全局唯一**，操作注入逻辑通用
   - 每个操作一个 inject 函数，高内聚实现
-  - 根据类型信息自动生成原生或模拟实现
+  - 根据类型信息参数自动生成原生或模拟实现
 
 ### 架构优势
 
@@ -68,6 +71,7 @@
 2. **低耦合**: 类型和操作完全隔离
 3. **易扩展**: 添加新类型只需在类型表中添加条目
 4. **易维护**: 所有类型/操作相关逻辑集中在表中
+5. **多设备支持**: 每个设备独立管理自己的类型表，适应不同硬件能力
 
 ## 后端状态详情
 
@@ -75,11 +79,11 @@
 - **编译方式**: NVRTC 运行时编译
 - **依赖**: NVIDIA CUDA Toolkit
 - **表驱动实现**:
-  - `cuda_dtype_table.h/c`: 数据类型表
-  - `cuda_kernel_ops_table.h/c`: 内核操作表
+  - `cuda_dtype_table.h/c`: 数据类型表（设备级别，根据计算能力初始化）
+  - `cuda_kernel_ops_table.h/c`: 内核操作表（全局唯一）
 - **特性**:
   - 完整的内核编译和执行支持
-  - FLOAT16/BFLOAT16 使用 unsigned short 模拟实现
+  - FLOAT16/BFLOAT16 根据计算能力选择原生或模拟实现
   - 自动启用 `-use_fast_math` 优化性能
 - **最低要求**: CUDA Compute Capability 6.0+ (推荐 FP16 支持)
 
@@ -87,11 +91,11 @@
 - **编译方式**: 运行时编译
 - **依赖**: OpenCL SDK
 - **表驱动实现**:
-  - `opencl_dtype_table.h/c`: 数据类型表
-  - `opencl_kernel_ops_table.h/c`: 内核操作表
+  - `opencl_dtype_table.h/c`: 数据类型表（设备级别，根据扩展支持初始化）
+  - `opencl_kernel_ops_table.h/c`: 内核操作表（全局唯一）
 - **特性**:
   - 跨平台 GPU/CPU 支持
-  - FLOAT16 通过 `cl_khr_fp16` 扩展支持
+  - FLOAT16 通过 `cl_khr_fp16` 扩展检测
   - BFLOAT16 使用 `ushort` 存储 + 转换函数
   - 自动为指针参数添加 `__global` 限定符
 - **注意**: 某些设备可能不支持 `cl_khr_fp16` 扩展
@@ -100,8 +104,8 @@
 - **编译方式**: SPIR-V 编译（shaderc）
 - **依赖**: Vulkan SDK + shaderc
 - **表驱动实现**:
-  - `vulkan_dtype_table.h/c`: 数据类型表
-  - `vulkan_kernel_ops_table.h/c`: 内核操作表
+  - `vulkan_dtype_table.h/c`: 数据类型表（设备级别，根据特性检测初始化）
+  - `vulkan_kernel_ops_table.h/c`: 内核操作表（全局唯一）
 - **特性**:
   - 支持所有 Vulkan 设备
   - 设备能力检测（shaderFloat16/shaderInt64 等）
@@ -126,20 +130,19 @@
 ### 数据类型测试
 - FLOAT32/FLOAT64/INT32: ✅ 所有后端通过
 - INT64: ✅ 所有后端完全支持
-- INT8/UINT8/INT16: ✅ 所有后端通过
+- INT8/UINT8/INT16: ✅ 所有后端通过（包括 DIV 和 SCALE）
 - FLOAT16/BFLOAT16: ✅ 所有后端通过
 
 ### 功能测试
-- 向量加法/乘法：✅ 所有后端通过
-- 标量乘法：✅ 所有后端通过
+- 向量加法/乘法/减法/除法：✅ 所有后端通过
+- 标量乘法（SCALE）：✅ 所有后端通过（包括整数类型）
 - 激活函数 (ReLU/Sigmoid): ✅ 所有后端通过
 - 比较运算 (MAX/MIN): ✅ 所有后端通过
 - 算术运算 (ABS/SQUARE): ✅ 所有后端通过
 
-### 综合测试
-- **Comprehensive_Test**: ✅ 255/255 通过
-  - 3 后端 × 9 数据类型 × 9 操作 = 243 测试用例
-  - 额外测试：部分跳过情况
+### 数据类型测试 (test_dtype)
+- **测试结果**: 225 passed, 0 failed, 0 skipped
+- **覆盖范围**: 9 数据类型 × 5 操作 × 5 后端设备
 
 ## 性能基准
 
@@ -202,7 +205,15 @@ ace_kernel_invoke(dev, _ace_get_vec_scale(), ACE_DTYPE_FLOAT16, N,
 
 ## 更新日志
 
-### v1.0.0 (最新)
+### v1.1.0 (最新)
+- ✅ 重构：将数据类型表从全局改为设备级别
+  - CUDA: 根据计算能力动态初始化
+  - OpenCL: 根据设备扩展支持动态初始化
+  - Vulkan: 根据设备特性动态初始化
+- ✅ 测试：实现整数类型的 DIV 和 SCALE 操作测试
+- ✅ 修复：UINT8 减法测试的无符号溢出回绕验证
+
+### v1.0.0
 - ✅ 完成三后端表驱动架构重构
 - ✅ 修复 Vulkan 后端 FLOAT16/BF16/INT64/FLOAT64 支持
 - ✅ 修复 Vulkan push constants 对齐问题
