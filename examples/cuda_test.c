@@ -1,6 +1,10 @@
 /**
  * @file cuda_test.c
  * @brief CUDA 后端测试
+ * 
+ * 演示 ACE_INVOKE 宏的使用：
+ * - 标量参数（n, alpha）使用变量传递
+ * - buffer 参数直接传递
  */
 #include <stdio.h>
 #include <stdlib.h>

@@ -39,6 +39,8 @@ ace_device_get(ACE_DEVICE_CUDA, 0, &dev);  // 或 OPENCL/VULKAN
 
 ### 3. 执行内核
 
+#### 方式一：使用 ACE_INVOKE 宏（推荐）
+
 ```c
 const int N = 1000;
 float a[N], b[N], c[N];
@@ -51,18 +53,33 @@ ace_buffer_alloc(dev, N * sizeof(float), &bc);
 ace_buffer_write(ba, a, N * sizeof(float));
 ace_buffer_write(bb, b, N * sizeof(float));
 
-int n = N;
-void* args[] = {&n, ba, bb, bc};
-int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-
-ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+/* 使用 ACE_INVOKE 宏 - 自动处理参数类型 */
+int n = N;  /* 注意：标量参数必须是变量，不能是字面量 */
+ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, n, ba, bb, bc);
 ace_finish(dev);
 
 ace_buffer_read(bc, c, N * sizeof(float));
-
 ace_buffer_free(ba); ace_buffer_free(bb); ace_buffer_free(bc);
 ace_device_release(dev);
 ```
+
+#### 方式二：使用原始 API
+
+```c
+int n = N;
+void* args[] = {&n, ba, bb, bc};
+int sizes[] = {sizeof(int), 0, 0, 0};  /* 0 表示 buffer */
+
+ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
+ace_finish(dev);
+```
+
+> **重要提示**：`ACE_INVOKE` 宏的标量参数必须是**左值（变量）**，不能是字面量或表达式。
+> - ✅ 正确：`int n = 100; ACE_INVOKE(..., n, ...);`
+> - ❌ 错误：`ACE_INVOKE(..., 100, ...);`
+> - ❌ 错误：`ACE_INVOKE(..., N + 1, ...);`
+> 
+> 如需传递字面量或表达式，请先赋值给局部变量。
 
 ---
 
@@ -237,11 +254,71 @@ ACE_CHECK_VOID(some_void_function());
 
 ### ACE_INVOKE
 
-简化的内核调用（C 语言）。
+简化的内核调用宏（C 语言）。
 
 ```c
 ACE_INVOKE(dev, kernel_name, dtype, n, arg1, arg2, ...);
 ```
+
+**参数说明：**
+- `dev` - 设备句柄
+- `kernel_name` - 内核名称（与 `ACE_KERNEL` 定义的名称一致）
+- `dtype` - 数据类型（`ace_dtype_t`）
+- `n` - 全局线程数量
+- `arg1, arg2, ...` - 内核参数（支持最多 8 个参数）
+
+**参数类型自动识别：**
+- `ace_buffer_t` 类型 → 自动识别为缓冲区（传递指针）
+- 其他类型 → 自动识别为标量值（传递地址）
+
+**⚠️ 重要使用限制：**
+
+标量参数必须是**左值（变量）**，不能是字面量或表达式。
+
+| 用法 | 示例 | 状态 |
+|------|------|------|
+| 变量 | `int n = 100; ACE_INVOKE(..., n, ...);` | ✅ 正确 |
+| 字面量 | `ACE_INVOKE(..., 100, ...);` | ❌ 编译错误 |
+| 表达式 | `ACE_INVOKE(..., N + 1, ...);` | ❌ 编译错误 |
+| 取地址 | `ACE_INVOKE(..., &n, ...);` | ❌ 错误（应传 `n`） |
+
+**正确用法示例：**
+
+```c
+/* 定义内核 */
+ACE_KERNEL(vec_scale,
+    void vec_scale(int n, T alpha, T* a, T* c) {
+        int i = GID;
+        if (i < n) c[i] = alpha * a[i];
+    }
+);
+
+/* 执行内核 */
+const int N = 1024;
+float alpha = 2.0f;
+ace_buffer_t buf_a, buf_c;
+
+/* 正确：使用变量 */
+int n = N;
+ACE_INVOKE(dev, vec_scale, ACE_DTYPE_FLOAT32, N, n, alpha, buf_a, buf_c);
+
+/* 错误：字面量会导致编译错误 */
+// ACE_INVOKE(dev, vec_scale, ACE_DTYPE_FLOAT32, N, N, 2.0f, buf_a, buf_c);  // ❌
+
+/* 解决方法：先赋值给变量 */
+int n_val = N;
+float alpha_val = 2.0f;
+ACE_INVOKE(dev, vec_scale, ACE_DTYPE_FLOAT32, N, n_val, alpha_val, buf_a, buf_c);  // ✅
+```
+
+**技术说明：**
+
+`ACE_INVOKE` 宏使用 C11 `_Generic` 实现类型自动识别：
+- 内部维护参数指针数组和大小数组
+- 自动区分 buffer（传递指针）和标量（传递地址）
+- 支持 1-8 个参数
+
+如需传递更多参数或需要更灵活的控制，请使用原始 `ace_kernel_invoke` API。
 
 ---
 

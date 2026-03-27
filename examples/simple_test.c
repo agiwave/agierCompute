@@ -1,6 +1,10 @@
 /**
  * @file simple_test.c
  * @brief 简单测试 - 验证基本功能
+ * 
+ * 演示 ACE_INVOKE 宏的基本用法：
+ * - 标量参数使用变量传递（不能是字面量）
+ * - buffer 参数直接传递
  */
 #include <stdio.h>
 #include <stdlib.h>

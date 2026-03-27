@@ -30,6 +30,8 @@ ace_device_get(ACE_DEVICE_CUDA, 0, &dev);  // 或 OPENCL/VULKAN
 
 ### 3. 执行内核
 
+#### 方式一：使用 ACE_INVOKE 宏（推荐）
+
 ```c
 const int N = 1000;
 float a[N], b[N], c[N];
@@ -42,18 +44,33 @@ ace_buffer_alloc(dev, N * sizeof(float), &bc);
 ace_buffer_write(ba, a, N * sizeof(float));
 ace_buffer_write(bb, b, N * sizeof(float));
 
-int n = N;
-void* args[] = {&n, ba, bb, bc};
-int types[] = {ACE_VAL, ACE_BUF, ACE_BUF, ACE_BUF};
-
-ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, types, 4);
+/* 使用 ACE_INVOKE 宏 - 自动处理参数类型 */
+int n = N;  /* 注意：标量参数必须是变量，不能是字面量 */
+ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, n, ba, bb, bc);
 ace_finish(dev);
 
 ace_buffer_read(bc, c, N * sizeof(float));
-
 ace_buffer_free(ba); ace_buffer_free(bb); ace_buffer_free(bc);
 ace_device_release(dev);
 ```
+
+#### 方式二：使用原始 API
+
+```c
+int n = N;
+void* args[] = {&n, ba, bb, bc};
+int sizes[] = {sizeof(int), 0, 0, 0};  /* 0 表示 buffer */
+
+ace_kernel_invoke(dev, _ace_get_vec_add(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
+ace_finish(dev);
+```
+
+> **重要提示**：`ACE_INVOKE` 宏的标量参数必须是**左值（变量）**，不能是字面量或表达式。
+> - ✅ 正确：`int n = 100; ACE_INVOKE(..., n, ...);`
+> - ❌ 错误：`ACE_INVOKE(..., 100, ...);`
+> - ❌ 错误：`ACE_INVOKE(..., N + 1, ...);`
+> 
+> 如需传递字面量或表达式，请先赋值给局部变量。
 
 ## 支持的后端
 
