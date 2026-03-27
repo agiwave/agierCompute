@@ -367,8 +367,8 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
                 
                 while (param_start < end && *param_start != ',' && *param_start != ')') {
                     if (*param_start == '*') {
-                        memcpy(dst, "__global ", 9);
-                        dst += 9;
+                        memcpy(dst, " __global ", 10);  /* 前后都有空格 */
+                        dst += 10;
                     }
                     *dst++ = *param_start++;
                 }

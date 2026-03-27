@@ -1,6 +1,14 @@
 /**
  * @file cuda_type_utils.c
  * @brief CUDA 类型辅助工具和动态 kxxx 函数注入
+ * 
+ * 动态注入机制:
+ * 1. 扫描用户内核代码，找到所有 kxxx( 模式的函数调用
+ * 2. 对每个找到的 kxxx 函数：
+ *    - 如果原生支持：注入 #define kxxx(a,b) ((a) op (b))
+ *    - 如果不原生支持：注入 __device__ inline 模拟函数
+ * 3. 避免重复注入
+ * 4. 类型定义在函数之前注入
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,10 +38,6 @@ const char* cuda_get_type_name(ace_dtype_t dtype) {
     }
 }
 
-/* ============================================================================
- * 类型头文件
- * ============================================================================ */
-
 const char* cuda_get_type_headers(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT16:
@@ -45,13 +49,32 @@ const char* cuda_get_type_headers(ace_dtype_t dtype) {
     }
 }
 
-/* ============================================================================
- * 类型宏定义
- * ============================================================================ */
-
 const char* cuda_get_type_macros(ace_dtype_t dtype) {
     (void)dtype;
     return "";
+}
+
+/* ============================================================================
+ * 检查类型是否原生支持 kxxx 运算
+ * ============================================================================ */
+
+static int is_native_supported(ace_dtype_t dtype) {
+    /* CUDA 中 float/double/int 等都原生支持，half/bfloat16 需要模拟 */
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:
+        case ACE_DTYPE_FLOAT64:
+        case ACE_DTYPE_INT32:
+        case ACE_DTYPE_INT64:
+        case ACE_DTYPE_INT8:
+        case ACE_DTYPE_UINT8:
+        case ACE_DTYPE_INT16:
+            return 1;  /* 原生支持 */
+        case ACE_DTYPE_FLOAT16:
+        case ACE_DTYPE_BFLOAT16:
+            return 0;  /* 需要模拟 */
+        default:
+            return 1;
+    }
 }
 
 /* ============================================================================
@@ -61,17 +84,8 @@ const char* cuda_get_type_macros(ace_dtype_t dtype) {
 const char* cuda_get_kernel_macros(ace_dtype_t dtype) {
     static char macros_buf[2048];
     
-    if (dtype == ACE_DTYPE_FLOAT16) {
-        snprintf(macros_buf, sizeof(macros_buf),
-            "#define K_ZERO half(0)\n"
-            "#define K_ONE half(1)\n"
-            "#define K_NEG_ONE half(-1)\n");
-    } else if (dtype == ACE_DTYPE_BFLOAT16) {
-        snprintf(macros_buf, sizeof(macros_buf),
-            "#define K_ZERO __float2bfloat16(0.0f)\n"
-            "#define K_ONE __float2bfloat16(1.0f)\n"
-            "#define K_NEG_ONE __float2bfloat16(-1.0f)\n");
-    } else {
+    if (is_native_supported(dtype)) {
+        /* 原生支持：直接展开为运算符 */
         const char* type_name = cuda_get_type_name(dtype);
         snprintf(macros_buf, sizeof(macros_buf),
             "#define kadd(a, b) ((a) + (b))\n"
@@ -88,12 +102,27 @@ const char* cuda_get_kernel_macros(ace_dtype_t dtype) {
             "#define K_ONE (%s)1\n"
             "#define K_NEG_ONE (%s)-1\n",
             type_name, type_name, type_name);
+    } else {
+        /* 非原生支持：只定义常量，函数动态注入 */
+        if (dtype == ACE_DTYPE_FLOAT16) {
+            snprintf(macros_buf, sizeof(macros_buf),
+                "#define K_ZERO __float2half(0.0f)\n"
+                "#define K_ONE __float2half(1.0f)\n"
+                "#define K_NEG_ONE __float2half(-1.0f)\n");
+        } else if (dtype == ACE_DTYPE_BFLOAT16) {
+            snprintf(macros_buf, sizeof(macros_buf),
+                "#define K_ZERO __float2bfloat16(0.0f)\n"
+                "#define K_ONE __float2bfloat16(1.0f)\n"
+                "#define K_NEG_ONE __float2bfloat16(-1.0f)\n");
+        } else {
+            macros_buf[0] = '\0';
+        }
     }
     return macros_buf;
 }
 
 /* ============================================================================
- * 类型转换函数（只包含转换，不包含运算）
+ * 类型转换函数（仅用于非原生支持的类型）
  * ============================================================================ */
 
 static const char* get_type_converters(ace_dtype_t dtype) {
@@ -116,189 +145,100 @@ static const char* get_type_converters(ace_dtype_t dtype) {
 }
 
 /* ============================================================================
- * 动态 kxxx 函数注入 - 使用正则表达式提取并注入
+ * 动态 kxxx 函数注入
  * ============================================================================ */
 
-/* 支持的 kxxx 函数列表 */
-typedef enum {
-    K_FUNC_ADD,
-    K_FUNC_SUB,
-    K_FUNC_MUL,
-    K_FUNC_DIV,
-    K_FUNC_LT,
-    K_FUNC_LE,
-    K_FUNC_GT,
-    K_FUNC_GE,
-    K_FUNC_EQ,
-    K_FUNC_NE,
-    K_FUNC_COUNT
-} k_func_id_t;
-
-static const char* k_func_names[] = {
-    "kadd", "ksub", "kmul", "kdiv",
-    "klt", "kle", "kgt", "kge", "keq", "kne"
-};
-
-/* 从代码中提取所有 kxxx( 模式的函数调用 */
-static int extract_k_functions(const char* code, int* found_funcs) {
-    int count = 0;
-    const char* p = code;
-    
-    /* 初始化 */
-    for (int i = 0; i < K_FUNC_COUNT; i++) {
-        found_funcs[i] = 0;
+/* 注入单个 kxxx 函数，返回注入的代码长度 */
+static int inject_k_function(char* buf, const char* func_name, 
+                              const char* type_name, const char* to_f32, 
+                              const char* from_f32) {
+    if (strcmp(func_name, "kadd") == 0) {
+        return sprintf(buf,
+            "__device__ inline %s kadd(%s a, %s b) { "
+            "  return %s(%s(a) + %s(b)); "
+            "}\n",
+            type_name, type_name, type_name, from_f32, to_f32, to_f32);
     }
-    
-    /* 使用类似正则的方式匹配 kxxx( 模式 */
-    while (*p) {
-        /* 查找 'k' 开头 */
-        if (*p == 'k') {
-            /* 检查是否是 kxxx( 模式 */
-            if (p[1] == 'a' && p[2] == 'd' && p[3] == 'd' && p[4] == '(') {
-                found_funcs[K_FUNC_ADD] = 1;
-                p += 5;
-                continue;
-            }
-            if (p[1] == 's' && p[2] == 'u' && p[3] == 'b' && p[4] == '(') {
-                found_funcs[K_FUNC_SUB] = 1;
-                p += 5;
-                continue;
-            }
-            if (p[1] == 'm' && p[2] == 'u' && p[3] == 'l' && p[4] == '(') {
-                found_funcs[K_FUNC_MUL] = 1;
-                p += 5;
-                continue;
-            }
-            if (p[1] == 'd' && p[2] == 'i' && p[3] == 'v' && p[4] == '(') {
-                found_funcs[K_FUNC_DIV] = 1;
-                p += 5;
-                continue;
-            }
-            if (p[1] == 'l' && p[2] == 't' && p[3] == '(') {
-                found_funcs[K_FUNC_LT] = 1;
-                p += 4;
-                continue;
-            }
-            if (p[1] == 'l' && p[2] == 'e' && p[3] == '(') {
-                found_funcs[K_FUNC_LE] = 1;
-                p += 4;
-                continue;
-            }
-            if (p[1] == 'g' && p[2] == 't' && p[3] == '(') {
-                found_funcs[K_FUNC_GT] = 1;
-                p += 4;
-                continue;
-            }
-            if (p[1] == 'g' && p[2] == 'e' && p[3] == '(') {
-                found_funcs[K_FUNC_GE] = 1;
-                p += 4;
-                continue;
-            }
-            if (p[1] == 'e' && p[2] == 'q' && p[3] == '(') {
-                found_funcs[K_FUNC_EQ] = 1;
-                p += 4;
-                continue;
-            }
-            if (p[1] == 'n' && p[2] == 'e' && p[3] == '(') {
-                found_funcs[K_FUNC_NE] = 1;
-                p += 4;
-                continue;
-            }
-        }
-        p++;
+    if (strcmp(func_name, "ksub") == 0) {
+        return sprintf(buf,
+            "__device__ inline %s ksub(%s a, %s b) { "
+            "  return %s(%s(a) - %s(b)); "
+            "}\n",
+            type_name, type_name, type_name, from_f32, to_f32, to_f32);
     }
-    
-    /* 计算找到的函数数量 */
-    for (int i = 0; i < K_FUNC_COUNT; i++) {
-        if (found_funcs[i]) count++;
+    if (strcmp(func_name, "kmul") == 0) {
+        return sprintf(buf,
+            "__device__ inline %s kmul(%s a, %s b) { "
+            "  return %s(%s(a) * %s(b)); "
+            "}\n",
+            type_name, type_name, type_name, from_f32, to_f32, to_f32);
     }
-    
-    return count;
+    if (strcmp(func_name, "kdiv") == 0) {
+        return sprintf(buf,
+            "__device__ inline %s kdiv(%s a, %s b) { "
+            "  return %s(%s(a) / %s(b)); "
+            "}\n",
+            type_name, type_name, type_name, from_f32, to_f32, to_f32);
+    }
+    if (strcmp(func_name, "klt") == 0) {
+        return sprintf(buf,
+            "__device__ inline bool klt(%s a, %s b) { "
+            "  return %s(a) < %s(b); "
+            "}\n",
+            type_name, type_name, to_f32, to_f32);
+    }
+    if (strcmp(func_name, "kle") == 0) {
+        return sprintf(buf,
+            "__device__ inline bool kle(%s a, %s b) { "
+            "  return %s(a) <= %s(b); "
+            "}\n",
+            type_name, type_name, to_f32, to_f32);
+    }
+    if (strcmp(func_name, "kgt") == 0) {
+        return sprintf(buf,
+            "__device__ inline bool kgt(%s a, %s b) { "
+            "  return %s(a) > %s(b); "
+            "}\n",
+            type_name, type_name, to_f32, to_f32);
+    }
+    if (strcmp(func_name, "kge") == 0) {
+        return sprintf(buf,
+            "__device__ inline bool kge(%s a, %s b) { "
+            "  return %s(a) >= %s(b); "
+            "}\n",
+            type_name, type_name, to_f32, to_f32);
+    }
+    if (strcmp(func_name, "keq") == 0) {
+        return sprintf(buf,
+            "__device__ inline bool keq(%s a, %s b) { "
+            "  return %s(a) == %s(b); "
+            "}\n",
+            type_name, type_name, to_f32, to_f32);
+    }
+    if (strcmp(func_name, "kne") == 0) {
+        return sprintf(buf,
+            "__device__ inline bool kne(%s a, %s b) { "
+            "  return %s(a) != %s(b); "
+            "}\n",
+            type_name, type_name, to_f32, to_f32);
+    }
+    return 0;
 }
 
-/* 生成单个 kxxx 函数的实现 */
-static int generate_k_function(char* buf, size_t buf_size, k_func_id_t func_id, 
-                                const char* type_name, const char* to_f32, 
-                                const char* from_f32) {
-    (void)func_id;  /* 用于 switch 判断 */
-    
-    switch (func_id) {
-        case K_FUNC_ADD:
-            return snprintf(buf, buf_size,
-                "__device__ inline %s kadd(%s a, %s b) { "
-                "  return %s(%s(a) + %s(b)); "
-                "}\n",
-                type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        case K_FUNC_SUB:
-            return snprintf(buf, buf_size,
-                "__device__ inline %s ksub(%s a, %s b) { "
-                "  return %s(%s(a) - %s(b)); "
-                "}\n",
-                type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        case K_FUNC_MUL:
-            return snprintf(buf, buf_size,
-                "__device__ inline %s kmul(%s a, %s b) { "
-                "  return %s(%s(a) * %s(b)); "
-                "}\n",
-                type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        case K_FUNC_DIV:
-            return snprintf(buf, buf_size,
-                "__device__ inline %s kdiv(%s a, %s b) { "
-                "  return %s(%s(a) / %s(b)); "
-                "}\n",
-                type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        case K_FUNC_LT:
-            return snprintf(buf, buf_size,
-                "__device__ inline bool klt(%s a, %s b) { "
-                "  return %s(a) < %s(b); "
-                "}\n",
-                type_name, type_name, to_f32, to_f32);
-        case K_FUNC_LE:
-            return snprintf(buf, buf_size,
-                "__device__ inline bool kle(%s a, %s b) { "
-                "  return %s(a) <= %s(b); "
-                "}\n",
-                type_name, type_name, to_f32, to_f32);
-        case K_FUNC_GT:
-            return snprintf(buf, buf_size,
-                "__device__ inline bool kgt(%s a, %s b) { "
-                "  return %s(a) > %s(b); "
-                "}\n",
-                type_name, type_name, to_f32, to_f32);
-        case K_FUNC_GE:
-            return snprintf(buf, buf_size,
-                "__device__ inline bool kge(%s a, %s b) { "
-                "  return %s(a) >= %s(b); "
-                "}\n",
-                type_name, type_name, to_f32, to_f32);
-        case K_FUNC_EQ:
-            return snprintf(buf, buf_size,
-                "__device__ inline bool keq(%s a, %s b) { "
-                "  return %s(a) == %s(b); "
-                "}\n",
-                type_name, type_name, to_f32, to_f32);
-        case K_FUNC_NE:
-            return snprintf(buf, buf_size,
-                "__device__ inline bool kne(%s a, %s b) { "
-                "  return %s(a) != %s(b); "
-                "}\n",
-                type_name, type_name, to_f32, to_f32);
-        default:
-            return 0;
-    }
-}
-
-/* 动态注入实际使用到的 kxxx 函数 */
-static void inject_used_k_functions(char* out, const char* code, const char* converters, ace_dtype_t dtype) {
+/* 
+ * 扫描代码并注入所有找到的 kxxx 函数
+ * 找到什么 inject 什么，没找到就不 inject
+ * 使用 injected_mask 避免重复注入
+ */
+static void scan_and_inject(char* out, const char* code, ace_dtype_t dtype, int* injected_mask) {
     if (dtype != ACE_DTYPE_FLOAT16 && dtype != ACE_DTYPE_BFLOAT16) {
-        return;  /* 基础类型不需要注入 */
+        return;
     }
-
-    int found_funcs[K_FUNC_COUNT];
-    int count = extract_k_functions(code, found_funcs);
     
-    if (count == 0) {
-        return;  /* 没有使用任何 kxxx 函数 */
+    /* 检查是否已经全部注入过了 */
+    const int ALL_FUNCTIONS = 0x3FF;  /* 10 个函数 */
+    if (*injected_mask == ALL_FUNCTIONS) {
+        return;
     }
 
     char inject_buf[8192] = "";
@@ -309,43 +249,63 @@ static void inject_used_k_functions(char* out, const char* code, const char* con
     const char* to_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f16_to_f32" : "bf16_to_f32";
     const char* from_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f32_to_f16" : "f32_to_bf16";
 
-    /* 遍历所有找到的函数，生成对应的实现 */
-    for (int i = 0; i < K_FUNC_COUNT; i++) {
-        if (found_funcs[i]) {
-            int len = generate_k_function(p, end - p, (k_func_id_t)i, 
-                                          type_name, to_f32, from_f32);
-            p += len;
+    /* 扫描代码，查找所有 kxxx( 模式 */
+    const char* s = code;
+    while (*s) {
+        /* 查找 k 开头的标识符 */
+        if (islower(*s) && s[1] && islower(s[1]) && s[2] && islower(s[2])) {
+            const char* start = s;
+            while (islower(*s)) s++;
+
+            /* 检查后面是否是 '(' */
+            if (*s == '(') {
+                /* 提取函数名 */
+                char func_name[16];
+                size_t len = s - start;
+                if (len < sizeof(func_name)) {
+                    strncpy(func_name, start, len);
+                    func_name[len] = '\0';
+
+                    /* 检查是否是 kxxx 函数 */
+                    if (func_name[0] == 'k' && func_name[1] && func_name[2]) {
+                        /* 计算函数 ID 用于去重 */
+                        int func_id = -1;
+                        if (strcmp(func_name, "kadd") == 0) func_id = 0;
+                        else if (strcmp(func_name, "ksub") == 0) func_id = 1;
+                        else if (strcmp(func_name, "kmul") == 0) func_id = 2;
+                        else if (strcmp(func_name, "kdiv") == 0) func_id = 3;
+                        else if (strcmp(func_name, "klt") == 0) func_id = 4;
+                        else if (strcmp(func_name, "kle") == 0) func_id = 5;
+                        else if (strcmp(func_name, "kgt") == 0) func_id = 6;
+                        else if (strcmp(func_name, "kge") == 0) func_id = 7;
+                        else if (strcmp(func_name, "keq") == 0) func_id = 8;
+                        else if (strcmp(func_name, "kne") == 0) func_id = 9;
+
+                        /* 只注入还未注入的函数 */
+                        if (func_id >= 0 && func_id < 10 && !(*injected_mask & (1 << func_id))) {
+                            int inj_len = inject_k_function(p, func_name, type_name, to_f32, from_f32);
+                            if (inj_len > 0) {
+                                p += inj_len;
+                                *injected_mask |= (1 << func_id);  /* 标记为已注入 */
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            s++;
         }
     }
 
-    /* 将注入的函数插入到输出代码中 - 在 converters 之后 */
-    if (inject_buf[0] != '\0') {
-        /* 找到 converters 结束的位置，插入到那里 */
-        char* inject_pos = strstr(out, converters);
-        if (inject_pos) {
-            inject_pos += strlen(converters);
-            /* 创建新缓冲区 */
-            char* temp = (char*)malloc(strlen(out) + strlen(inject_buf) + 10);
-            if (temp) {
-                size_t prefix_len = inject_pos - out;
-                strncpy(temp, out, prefix_len);
-                temp[prefix_len] = '\0';
-                strcat(temp, "\n");
-                strcat(temp, inject_buf);
-                strcat(temp, inject_pos);
-                strcpy(out, temp);
-                free(temp);
-            }
-        } else {
-            /* 如果没有 converters，插入到开头 */
-            char* temp = (char*)malloc(strlen(out) + strlen(inject_buf) + 10);
-            if (temp) {
-                strcpy(temp, inject_buf);
-                strcat(temp, "\n");
-                strcat(temp, out);
-                strcpy(out, temp);
-                free(temp);
-            }
+    /* 将注入的函数插入到输出代码中 */
+    if (p > inject_buf) {
+        char* temp = (char*)malloc(strlen(out) + strlen(inject_buf) + 10);
+        if (temp) {
+            strcpy(temp, inject_buf);
+            strcat(temp, "\n");
+            strcat(temp, out);
+            strcpy(out, temp);
+            free(temp);
         }
     }
 }
@@ -414,12 +374,21 @@ char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) 
 
     size_t body_len = body_end - body_start - 1;
 
-    /* 检测是否需要转换函数 */
+    /* 判断是否需要转换函数（扫描一下有没有 kxxx） */
     int need_converters = 0;
-    if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16) {
-        int found_funcs[K_FUNC_COUNT];
-        if (extract_k_functions(code, found_funcs) > 0) {
-            need_converters = 1;
+    if (!is_native_supported(dtype)) {
+        const char* s = code;
+        while (*s) {
+            if (s[0] == 'k' && islower(s[1]) && islower(s[2])) {
+                const char* start = s;
+                while (islower(*s)) s++;
+                if (*s == '(' && (s - start) <= 5) {
+                    need_converters = 1;
+                    break;
+                }
+            } else {
+                s++;
+            }
         }
     }
 
@@ -449,9 +418,16 @@ char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) 
         (int)body_len, body_start + 1
     );
 
-    /* 动态注入实际使用到的 kxxx 函数 */
+    /* 扫描代码并注入所有找到的 kxxx 函数 - 放在 converters 之后 */
     if (need_converters) {
-        inject_used_k_functions(out, code, converters, dtype);
+        int injected_mask = 0;  /* 初始化为未注入任何函数 */
+        /* 找到 converters 结束的位置 */
+        char* inject_pos = strstr(out, converters);
+        if (inject_pos) {
+            inject_pos += strlen(converters);
+            /* 在当前位置注入 */
+            scan_and_inject(inject_pos, code, dtype, &injected_mask);
+        }
     }
 
     free(params);
