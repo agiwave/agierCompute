@@ -156,37 +156,39 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
     if (*n_scalars > 0) {
         pc_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         pc_range.offset = 0;
-        /* 计算 push constants 大小，考虑 8 字节对齐 */
-        /* 第一个参数总是 int (4 字节)，后续参数根据 GLSL 类型可能是 2/4/8 字节 */
+        /* 计算 push constants 大小，考虑 8 字节对齐
+         * 第一个参数总是 int (4 字节)，后续参数根据 GLSL 类型确定大小
+         */
         size_t total_size = 0;
         for (int i = 0; i < *n_scalars; i++) {
+            int param_size = 4;  /* 默认 4 字节 */
             if (i == 0) {
                 /* 第一个参数是 int */
-                total_size += 4;
+                param_size = 4;
             } else {
                 /* 后续参数根据 dtype 确定大小 */
-                int dtype_size = 4;  /* 默认 4 字节 */
-                if (kernel_def->dtype == ACE_DTYPE_FLOAT64 || 
+                if (kernel_def->dtype == ACE_DTYPE_FLOAT64 ||
                     kernel_def->dtype == ACE_DTYPE_INT64) {
-                    dtype_size = 8;
+                    param_size = 8;
                 } else if (kernel_def->dtype == ACE_DTYPE_FLOAT16 ||
                            kernel_def->dtype == ACE_DTYPE_BFLOAT16 ||
                            kernel_def->dtype == ACE_DTYPE_INT8 ||
                            kernel_def->dtype == ACE_DTYPE_UINT8) {
-                    dtype_size = 2;  /* 16 位类型 */
-                }
-                
-                if (dtype_size == 8) {
-                    /* 8 字节对齐 */
-                    total_size = (total_size + 7) & ~7;
-                    total_size += 8;
-                } else if (dtype_size == 2) {
-                    /* 2 字节类型，填充到 4 字节边界 */
-                    total_size = (total_size + 3) & ~3;
-                    total_size += 4;
+                    param_size = 2;
                 } else {
-                    total_size += 4;
+                    param_size = 4;
                 }
+            }
+
+            /* 对齐处理 */
+            if (param_size == 8) {
+                total_size = (total_size + 7) & ~7;  /* 8 字节对齐 */
+                total_size += 8;
+            } else if (param_size == 2) {
+                total_size = (total_size + 3) & ~3;  /* 4 字节对齐 */
+                total_size += 4;
+            } else {
+                total_size += 4;
             }
         }
         pc_range.size = total_size;
@@ -346,22 +348,21 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     int scalar_idx = 0;
     for (int i = 0; i < n && scalar_idx < n_scalars; i++) {
         if (sizes[i] > 0) {
-            /* 根据参数大小正确复制数据，考虑对齐 */
-            if (sizes[i] == sizeof(double) || sizes[i] == sizeof(int64_t)) {
-                /* 8 字节类型需要 8 字节对齐 */
-                push_size = (push_size + 7) & ~7;
+            int param_size = sizes[i];
+            /* 对齐处理：与 pipeline layout 计算保持一致 */
+            if (param_size == 8) {
+                push_size = (push_size + 7) & ~7;  /* 8 字节对齐 */
                 memcpy(&push_data[push_size], args[i], 8);
                 push_size += 8;
-            } else if (sizes[i] == 2) {
-                /* 2 字节类型，填充到 4 字节边界 */
-                push_size = (push_size + 3) & ~3;
+            } else if (param_size == 2) {
+                push_size = (push_size + 3) & ~3;  /* 4 字节对齐 */
                 memcpy(&push_data[push_size], args[i], 2);
-                memset(&push_data[push_size + 2], 0, 2);  /* 填充 0 */
+                memset(&push_data[push_size + 2], 0, 2);
                 push_size += 4;
             } else {
                 /* 4 字节类型 */
-                memcpy(&push_data[push_size], args[i], sizes[i]);
-                push_size += sizes[i];
+                memcpy(&push_data[push_size], args[i], 4);
+                push_size += 4;
             }
             scalar_idx++;
         }
