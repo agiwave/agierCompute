@@ -517,14 +517,22 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     }
 
     /* 步骤 3: 构建基础代码框架 */
+    const char* type_name = vk_get_buffer_type_name(dtype);
+    
+    size_t body_len = body_end - body_start - 1;
+    char* body = (char*)malloc(body_len + 1);
+    strncpy(body, body_start + 1, body_len);
+    body[body_len] = '\0';
+    
     size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) +
-                 strlen(extensions) + strlen(type_macros) + (body_end - body_start);
+                 strlen(extensions) + strlen(type_macros) + strlen(body);
     char* out = (char*)malloc(len);
 
     snprintf(out, len,
         "#version 450\n"
         "%s"
         "\nlayout(local_size_x = 256) in;\n"
+        "#define T %s\n"  /* 添加 T 的宏定义 */
         "%s"
         "%s"
         "%s"
@@ -534,15 +542,18 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         "#define BSIZE 256\n"
         "#define BARRIER() barrier()\n"
         "void main() {\n"
-        "%.*s"
+        "%s"
         "}\n",
         extensions,
+        type_name,  /* T 替换为实际类型 */
         buffers,
         push_constants,
         pc_access,
         type_macros,
-        (int)(body_end - body_start - 1), body_start + 1
+        body
     );
+    
+    free(body);
 
     /* 步骤 4-6: 遍历所有 kxxx，注入对应的实现 */
     if (has_k_functions) {
