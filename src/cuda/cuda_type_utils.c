@@ -25,19 +25,58 @@
  * 设备能力查询
  * ============================================================================ */
 
+/**
+ * @brief 查询 CUDA 设备是否原生支持指定类型的 kxxx 运算
+ * 
+ * CUDA 设备对 FP16/BF16 的支持取决于计算能力 (Compute Capability):
+ * - FP16 (half): Compute Capability >= 5.3 (Maxwell 之后) 支持原生 half 运算
+ * - BF16: Compute Capability >= 8.0 (Ampere 之后) 支持原生 bfloat16 运算
+ * - INT8: Compute Capability >= 6.1 (Volta 之后) 支持原生 int8 运算
+ * - INT16: 大多数设备支持
+ */
 static int cuda_supports_native_kfunc(ace_dtype_t dtype) {
+    /* 获取当前 CUDA 设备属性 */
+    int device = 0;
+    cudaError_t err = cudaGetDevice(&device);
+    if (err != cudaSuccess) {
+        /* 如果无法获取设备信息，保守假设不支持 */
+        return (dtype != ACE_DTYPE_FLOAT16 && dtype != ACE_DTYPE_BFLOAT16);
+    }
+    
+    cudaDeviceProp prop;
+    err = cudaGetDeviceProperties(&prop, device);
+    if (err != cudaSuccess) {
+        return (dtype != ACE_DTYPE_FLOAT16 && dtype != ACE_DTYPE_BFLOAT16);
+    }
+    
+    int compute_major = prop.major;
+    int compute_minor = prop.minor;
+    int compute_capability = compute_major * 10 + compute_minor;
+    
     switch (dtype) {
         case ACE_DTYPE_FLOAT32:
         case ACE_DTYPE_FLOAT64:
         case ACE_DTYPE_INT32:
         case ACE_DTYPE_INT64:
+            return 1;  /* 所有 CUDA 设备都原生支持 */
+            
+        case ACE_DTYPE_FLOAT16:
+            /* FP16: Compute Capability >= 53 (5.3, Maxwell 之后) 支持原生 half 运算 */
+            return (compute_capability >= 53);
+            
+        case ACE_DTYPE_BFLOAT16:
+            /* BF16: Compute Capability >= 80 (8.0, Ampere 之后) 支持原生 bfloat16 运算 */
+            return (compute_capability >= 80);
+            
         case ACE_DTYPE_INT8:
         case ACE_DTYPE_UINT8:
+            /* INT8: Compute Capability >= 61 (6.1, Pascal 之后) 支持原生 int8 运算 */
+            return (compute_capability >= 61);
+            
         case ACE_DTYPE_INT16:
-            return 1;  /* 原生支持 */
-        case ACE_DTYPE_FLOAT16:
-        case ACE_DTYPE_BFLOAT16:
-            return 0;  /* 需要模拟 */
+            /* INT16: 大多数 CUDA 设备支持 */
+            return (compute_capability >= 30);
+            
         default:
             return 1;
     }
