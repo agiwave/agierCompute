@@ -79,7 +79,7 @@ static ace_test_result_t test_vec_add_dtype(ace_device_t dev, void* user_data) {
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
 
-    ACE_INVOKE(dev, vec_add, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+    ACE_INVOKE(dev, vec_add, cfg->dtype, N, N, buf_a, buf_b, buf_c);
 
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);
@@ -145,7 +145,7 @@ static ace_test_result_t test_vec_mul_dtype(ace_device_t dev, void* user_data) {
     ace_buffer_write(buf_a, h_a, bytes);
     ace_buffer_write(buf_b, h_b, bytes);
 
-    ACE_INVOKE(dev, vec_mul, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+    ACE_INVOKE(dev, vec_mul, cfg->dtype, N, N, buf_a, buf_b, buf_c);
 
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);

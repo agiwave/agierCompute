@@ -42,7 +42,7 @@ int test_device(ace_device_t dev, int idx) {
     printf("  Running kernel... ");
     fflush(stdout);
 
-    ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
+    ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, n, buf_a, buf_b, buf_c);
 
     printf("OK\n");
     ace_finish(dev);

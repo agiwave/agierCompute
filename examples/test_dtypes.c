@@ -241,11 +241,11 @@ static ace_test_result_t test_vec_add_dtype(ace_device_t dev, void* user_data) {
 
     /* 执行内核 - FP16/BF16 使用专用内核 */
     if (cfg->dtype == ACE_DTYPE_FLOAT16) {
-        ACE_INVOKE(dev, vec_add_fp16, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_add_fp16, cfg->dtype, N, N, buf_a, buf_b, buf_c);
     } else if (cfg->dtype == ACE_DTYPE_BFLOAT16) {
-        ACE_INVOKE(dev, vec_add_bf16, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_add_bf16, cfg->dtype, N, N, buf_a, buf_b, buf_c);
     } else {
-        ACE_INVOKE(dev, vec_add, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_add, cfg->dtype, N, N, buf_a, buf_b, buf_c);
     }
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);
@@ -470,11 +470,11 @@ static ace_test_result_t test_vec_mul_dtype(ace_device_t dev, void* user_data) {
 
     /* 执行内核 - FP16/BF16 使用专用内核 */
     if (cfg->dtype == ACE_DTYPE_FLOAT16) {
-        ACE_INVOKE(dev, vec_mul_fp16, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_mul_fp16, cfg->dtype, N, N, buf_a, buf_b, buf_c);
     } else if (cfg->dtype == ACE_DTYPE_BFLOAT16) {
-        ACE_INVOKE(dev, vec_mul_bf16, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_mul_bf16, cfg->dtype, N, N, buf_a, buf_b, buf_c);
     } else {
-        ACE_INVOKE(dev, vec_mul, cfg->dtype, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_mul, cfg->dtype, N, N, buf_a, buf_b, buf_c);
     }
     ace_finish(dev);
     ace_buffer_read(buf_c, h_c, bytes);

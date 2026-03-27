@@ -66,7 +66,7 @@ int main() {
     printf("\nCompiling kernel...\n");
 
     printf("Launching kernel...\n");
-    err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
+    err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, n, buf_a, buf_b, buf_c);
     if (err != ACE_OK) {
         printf("[OpenCL] kernel_launch failed: err=%d\n", err);
     }

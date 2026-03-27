@@ -66,7 +66,8 @@ int main() {
         ace_buffer_write(buf_a, h_a, N * sizeof(float));
         ace_buffer_write(buf_b, h_b, N * sizeof(float));
 
-        ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
+        int n_val = n;
+        ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, n_val, buf_a, buf_b, buf_c);
         ace_finish(dev);
         ace_buffer_read(buf_c, h_c, N * sizeof(float));
 
@@ -101,7 +102,11 @@ int main() {
         ace_buffer_alloc(dev, N * sizeof(float), &buf_out);
         ace_buffer_write(buf_in, h_in, N * sizeof(float));
 
-        ACE_INVOKE(dev, scale, ACE_DTYPE_FLOAT32, N, &n, &alpha, buf_in, buf_out);
+        int n_val = n;
+        float alpha_val = alpha;
+        void* args[] = {&n_val, &alpha_val, buf_in, buf_out};
+        int sizes[] = {sizeof(int), sizeof(float), 0, 0};
+        ace_kernel_invoke(dev, _ace_get_scale(), ACE_DTYPE_FLOAT32, N, args, sizes, 4);
         ace_finish(dev);
         ace_buffer_read(buf_out, h_out, N * sizeof(float));
 

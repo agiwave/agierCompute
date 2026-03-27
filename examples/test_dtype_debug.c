@@ -55,7 +55,7 @@ int main() {
         printf("  write buf_b: %s\n", err == ACE_OK ? "OK" : "FAIL");
         
         /* 使用 ACE_INVOKE 宏 */
-        ACE_INVOKE(dev, test_add, ACE_DTYPE_FLOAT16, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, test_add, ACE_DTYPE_FLOAT16, N, N, buf_a, buf_b, buf_c);
 
         ace_finish(dev);
         err = ace_buffer_read(buf_c, h_c, bytes);
@@ -108,7 +108,7 @@ int main() {
         printf("  write buf_b: %s\n", err == ACE_OK ? "OK" : "FAIL");
 
         /* 使用 ACE_INVOKE 宏 */
-        ACE_INVOKE(dev, test_add, ACE_DTYPE_FLOAT16, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, test_add, ACE_DTYPE_FLOAT16, N, N, buf_a, buf_b, buf_c);
 
         ace_device_release(dev);
     }
