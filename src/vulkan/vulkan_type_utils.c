@@ -346,28 +346,25 @@ static void scan_and_inject(char** out, const char* code, ace_dtype_t dtype, int
         
         if (!is_native) {
             /* 非原生支持：在类型定义之后注入 */
-            /* 找到类型转换函数定义的结束位置 */
+            /* 找到最后一个类型转换函数的结束位置 */
             const char* end_marker = NULL;
             if (dtype == ACE_DTYPE_FLOAT16) {
-                end_marker = "f16_to_f32(uint16_t x) {\n";
+                /* 查找 f32_to_f16 函数的结束位置 */
+                end_marker = "return uint16_t(sign | (exp << 10u) | man);\n}\n";
             } else if (dtype == ACE_DTYPE_BFLOAT16) {
-                end_marker = "bf16_to_f32(uint16_t x) {\n";
+                /* 查找 f32_to_bf16 函数的结束位置 */
+                end_marker = "return uint16_t(sign | (exp << 7u) | man);\n}\n";
             }
             
             if (end_marker) {
-                /* 查找类型定义结束位置（找到最后一个 }） */
                 char* marker_pos = strstr(*out, end_marker);
                 if (marker_pos) {
-                    /* 找到函数定义的结束 */
-                    char* end_pos = strchr(marker_pos, '}');
-                    if (end_pos) {
-                        insert_pos = end_pos + 1;  /* 跳过 } */
-                    }
+                    insert_pos = marker_pos + strlen(end_marker);
                 }
             }
         }
 
-        /* 如果找不到类型定义，就在 extern 之前注入 */
+        /* 如果找不到类型定义，就在 void main() 之前注入 */
         if (!insert_pos) {
             insert_pos = strstr(*out, "void main()");
         }
@@ -430,13 +427,24 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
             param_info_t* param = &params[n_params];
             char* dst = param->name;
             int is_ptr = 0;
+            int in_type = 1;  /* 正在解析类型名 */
 
             while (*p && *p != ',' && *p != ')' && n_params < 16) {
                 if (*p == '*') {
                     is_ptr = 1;
+                    in_type = 0;  /* 遇到 *，后面是参数名 */
                     p++;
                     continue;
                 }
+                /* 跳过类型名中的字符 */
+                if (in_type) {
+                    if (*p == ' ' || *p == '\t' || *p == '\n') {
+                        in_type = 0;  /* 类型名结束 */
+                    }
+                    p++;
+                    continue;
+                }
+                /* 解析参数名 */
                 if (*p != ' ' && *p != '\t' && *p != '\n' && *p != '&') {
                     *dst++ = *p;
                 }
