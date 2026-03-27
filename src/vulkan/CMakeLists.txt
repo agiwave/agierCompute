@@ -12,6 +12,8 @@ if(Vulkan_FOUND)
         vulkan_memory.c
         vulkan_kernel.c
         vulkan_type_utils.c
+        vulkan_dtype_table.c
+        vulkan_kernel_ops_table.c
     )
 
     target_include_directories(ace_be_vulkan
