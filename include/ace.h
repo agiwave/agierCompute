@@ -398,10 +398,9 @@ static inline const char* ace_error_string(ace_error_t err) {
 } /* end extern "C" */
 #endif
 
-#ifdef __KARGS__
+#ifdef __cplusplus
     #include <cassert>
     #include <type_traits>
-
     struct KInvoker {
         static const int MAX_INVOKE_ARGS = 20;
         enum EInvokeArgType {
@@ -425,7 +424,6 @@ static inline const char* ace_error_string(ace_error_t err) {
                 pArgType[nArgs] = EData;
                 *(T*)pArgs[nArgs].data = first;
             } else {
-                assert(false && "Unsupported argument type: size > 8 bytes");
                 pArgType[nArgs] = EDataPointer;
                 pArgs[nArgs].ptr = (void*)&first;
             }
@@ -445,7 +443,21 @@ static inline const char* ace_error_string(ace_error_t err) {
         ace_error_t invoke(ace_device_t device, ace_kernel_t kernel, ace_dtype_t dtype, size_t n) {
             void* _args[MAX_INVOKE_ARGS];
             for (int i = 0; i < nArgs; i++) {
-                _args[i] = (pArgType[i] == EBuffer) ? pArgs[i].ptr : (void*)pArgs[i].data;
+                switch(pArgType[i]) {
+                    case EBuffer:
+                        _args[i] = pArgs[i].ptr;
+                        break;
+                    case EData:
+                        _args[i] = (void*)pArgs[i].data;
+                        break;
+                    case EDataPointer:
+                        _args[i] = pArgs[i].ptr;
+                        break;
+                    default:
+                        assert(false && "Invalid argument type");
+                        _args[i] = nullptr;
+                        break;
+                }
             }
             return ace_kernel_invoke(device, kernel, dtype, n, _args, pArgSizes, nArgs);
         }
@@ -457,26 +469,19 @@ static inline const char* ace_error_string(ace_error_t err) {
 
 #else
     /* ============================================================================
-     * C 语言版本的 ACE_INVOKE - 使用内部存储结构支持临时值传递
-     * 支持最多 8 个参数，支持字面量和表达式
+     * C 语言版本的 ACE_INVOKE - 使用复合字面量简化实现
+     * 支持最多 16 个参数，支持 buffer 和标量
      * ============================================================================ */
 
-    #define ACE_INVOKE_MAX_ARGS 8
+    /* 参数计数（支持 1-16 个参数） */
+    #define _ACE_NARGS(...) _ACE_NARGS_(__VA_ARGS__,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
+    #define _ACE_NARGS_(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,N,...) N
 
-    /* 参数计数 */
-    #define _ACE_NARGS(...) _ACE_NARGS_(__VA_ARGS__, 8,7,6,5,4,3,2,1,)
-    #define _ACE_NARGS_(_1,_2,_3,_4,_5,_6,_7,_8,N,...) N
-
-    /* 连接宏 */
-    #define _ACE_CAT(a, b) _ACE_CAT_(a, b)
-    #define _ACE_CAT_(a, b) a##b
-
-    /* 主宏 - 简洁实现，支持 buffer 和标量
-     * 注意：标量参数必须是左值（变量），不能是字面量或表达式
-     * 如需传递字面量，请先赋值给局部变量
-     */
+    /* 参数类型识别：buffer 传指针，标量传地址 */
     #define _ACE_AP(a) _Generic((a), struct ace_buffer_*: (void*)(a), default: (void*)&(a))
     #define _ACE_AS(a) _Generic((a), struct ace_buffer_*: 0, default: sizeof(a))
+
+    /* 参数指针展开（A 系列） */
     #define _ACE_A1(a1) _ACE_AP(a1)
     #define _ACE_A2(a1,a2) _ACE_A1(a1),_ACE_AP(a2)
     #define _ACE_A3(a1,a2,a3) _ACE_A2(a1,a2),_ACE_AP(a3)
@@ -485,6 +490,16 @@ static inline const char* ace_error_string(ace_error_t err) {
     #define _ACE_A6(a1,a2,a3,a4,a5,a6) _ACE_A5(a1,a2,a3,a4,a5),_ACE_AP(a6)
     #define _ACE_A7(a1,a2,a3,a4,a5,a6,a7) _ACE_A6(a1,a2,a3,a4,a5,a6),_ACE_AP(a7)
     #define _ACE_A8(a1,a2,a3,a4,a5,a6,a7,a8) _ACE_A7(a1,a2,a3,a4,a5,a6,a7),_ACE_AP(a8)
+    #define _ACE_A9(a1,a2,a3,a4,a5,a6,a7,a8,a9) _ACE_A8(a1,a2,a3,a4,a5,a6,a7,a8),_ACE_AP(a9)
+    #define _ACE_A10(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10) _ACE_A9(a1,a2,a3,a4,a5,a6,a7,a8,a9),_ACE_AP(a10)
+    #define _ACE_A11(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) _ACE_A10(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10),_ACE_AP(a11)
+    #define _ACE_A12(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12) _ACE_A11(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11),_ACE_AP(a12)
+    #define _ACE_A13(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13) _ACE_A12(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12),_ACE_AP(a13)
+    #define _ACE_A14(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14) _ACE_A13(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13),_ACE_AP(a14)
+    #define _ACE_A15(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15) _ACE_A14(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14),_ACE_AP(a15)
+    #define _ACE_A16(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16) _ACE_A15(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15),_ACE_AP(a16)
+
+    /* 参数大小展开（Z 系列） */
     #define _ACE_Z1(a1) _ACE_AS(a1)
     #define _ACE_Z2(a1,a2) _ACE_Z1(a1),_ACE_AS(a2)
     #define _ACE_Z3(a1,a2,a3) _ACE_Z2(a1,a2),_ACE_AS(a3)
@@ -493,16 +508,28 @@ static inline const char* ace_error_string(ace_error_t err) {
     #define _ACE_Z6(a1,a2,a3,a4,a5,a6) _ACE_Z5(a1,a2,a3,a4,a5),_ACE_AS(a6)
     #define _ACE_Z7(a1,a2,a3,a4,a5,a6,a7) _ACE_Z6(a1,a2,a3,a4,a5,a6),_ACE_AS(a7)
     #define _ACE_Z8(a1,a2,a3,a4,a5,a6,a7,a8) _ACE_Z7(a1,a2,a3,a4,a5,a6,a7),_ACE_AS(a8)
-    #define _ACE_SEL(_8,_7,_6,_5,_4,_3,_2,_1,NAME,...) NAME
-    #define _ACE_ARGS(...) _ACE_SEL(__VA_ARGS__,_ACE_A8,_ACE_A7,_ACE_A6,_ACE_A5,_ACE_A4,_ACE_A3,_ACE_A2,_ACE_A1)(__VA_ARGS__)
-    #define _ACE_SIZES(...) _ACE_SEL(__VA_ARGS__,_ACE_Z8,_ACE_Z7,_ACE_Z6,_ACE_Z5,_ACE_Z4,_ACE_Z3,_ACE_Z2,_ACE_Z1)(__VA_ARGS__)
+    #define _ACE_Z9(a1,a2,a3,a4,a5,a6,a7,a8,a9) _ACE_Z8(a1,a2,a3,a4,a5,a6,a7,a8),_ACE_AS(a9)
+    #define _ACE_Z10(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10) _ACE_Z9(a1,a2,a3,a4,a5,a6,a7,a8,a9),_ACE_AS(a10)
+    #define _ACE_Z11(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) _ACE_Z10(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10),_ACE_AS(a11)
+    #define _ACE_Z12(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12) _ACE_Z11(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11),_ACE_AS(a12)
+    #define _ACE_Z13(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13) _ACE_Z12(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12),_ACE_AS(a13)
+    #define _ACE_Z14(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14) _ACE_Z13(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13),_ACE_AS(a14)
+    #define _ACE_Z15(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15) _ACE_Z14(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14),_ACE_AS(a15)
+    #define _ACE_Z16(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16) _ACE_Z15(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15),_ACE_AS(a16)
+
+    /* 选择器：根据参数数量选择对应的展开宏 */
+    #define _ACE_SEL(_16,_15,_14,_13,_12,_11,_10,_9,_8,_7,_6,_5,_4,_3,_2,_1,NAME,...) NAME
+    #define _ACE_ARGS(...) _ACE_SEL(__VA_ARGS__,_ACE_A16,_ACE_A15,_ACE_A14,_ACE_A13,_ACE_A12,_ACE_A11,_ACE_A10,_ACE_A9,_ACE_A8,_ACE_A7,_ACE_A6,_ACE_A5,_ACE_A4,_ACE_A3,_ACE_A2,_ACE_A1)(__VA_ARGS__)
+    #define _ACE_SIZES(...) _ACE_SEL(__VA_ARGS__,_ACE_Z16,_ACE_Z15,_ACE_Z14,_ACE_Z13,_ACE_Z12,_ACE_Z11,_ACE_Z10,_ACE_Z9,_ACE_Z8,_ACE_Z7,_ACE_Z6,_ACE_Z5,_ACE_Z4,_ACE_Z3,_ACE_Z2,_ACE_Z1)(__VA_ARGS__)
+
+    /* ACE_INVOKE: 使用复合字面量，简洁高效
+     * 注意：标量参数必须是左值（变量），不能是字面量或表达式
+     */
     #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
-        ({ \
-            void* _a[] = {_ACE_ARGS(__VA_ARGS__)}; \
-            int _z[] = {_ACE_SIZES(__VA_ARGS__)}; \
-            int _n = sizeof(_a) / sizeof(_a[0]); \
-            ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _a, _z, _n); \
-        })
+        ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, \
+            (void*[]){ _ACE_ARGS(__VA_ARGS__) }, \
+            (int[]){ _ACE_SIZES(__VA_ARGS__) }, \
+            _ACE_NARGS(__VA_ARGS__))
 #endif
 
 #endif /* ACE_H */
