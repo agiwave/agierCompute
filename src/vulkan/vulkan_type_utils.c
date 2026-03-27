@@ -181,8 +181,9 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     }
 
     size_t body_len = body_end - body_start - 1;
-    const char* buffer_type = vk_get_buffer_type_name(dtype);
     int use_native = vk_supports_native_storage(dtype);
+    /* Buffer 类型：模拟模式统一使用 uint 存储（简化实现） */
+    const char* buffer_type = use_native ? vk_get_buffer_type_name(dtype) : "uint";
 
     typedef struct {
         char name[64];
@@ -251,8 +252,9 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
                 char line[128];
-                /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
-                const char* scalar_type = (scalar_idx == 0) ? "int" : (use_native ? buffer_type : "uint");
+                /* 所有标量参数 4 字节对齐（Vulkan push constants 要求） */
+                /* 第一个参数 n 使用 int，其他使用 uint */
+                const char* scalar_type = (scalar_idx == 0) ? "int" : "uint";
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
                 char access[128];
@@ -290,9 +292,6 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     const char* type_defs = "";
     static char type_defs_buf[2048];
     
-    /* Buffer 类型：模拟模式使用 uint 存储，但保持正确的类型别名 */
-    const char* buffer_type = use_native ? vk_get_buffer_type_name(dtype) : "uint";
-    
     if (!use_native) {
         /* 模拟模式 - 定义自定义类型和 kadd/kmul 宏 */
         if (dtype == ACE_DTYPE_BFLOAT16) {
@@ -321,7 +320,7 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "#define kadd(a, b) bf16_add(a, b)\n"
                 "#define kmul(a, b) bf16_mul(a, b)\n"
                 "#define K_ZERO 0u\n"
-                "#define K_ONE 0x3F800000u\n");
+                "#define K_ONE 0x3F80u\n");
         } else if (dtype == ACE_DTYPE_FLOAT16) {
             snprintf(type_defs_buf, sizeof(type_defs_buf),
                 "/* FP16 模拟 */\n"

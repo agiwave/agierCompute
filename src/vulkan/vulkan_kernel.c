@@ -349,21 +349,8 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     }
 
     if (push_count > 0) {
-        /* 计算 push constants 大小：第一个参数是 int，后续根据类型 */
-        size_t push_size = 0;
-        for (int i = 0; i < push_count; i++) {
-            if (i == 0) {
-                push_size += sizeof(int);  /* 第一个参数 n 总是 int */
-            } else if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64) {
-                push_size += sizeof(float);  /* float 类型 */
-            } else if (dtype == ACE_DTYPE_BFLOAT16 || dtype == ACE_DTYPE_INT16) {
-                push_size += sizeof(uint16_t);  /* 16 位类型 */
-            } else {
-                push_size += sizeof(int);  /* int 类型 */
-            }
-        }
-        /* 确保 push constants 大小是 4 的倍数（Vulkan 要求） */
-        push_size = (push_size + 3) & ~3;
+        /* 计算 push constants 大小：每个参数 4 字节对齐（Vulkan 要求） */
+        size_t push_size = push_count * 4;
         vkCmdPushConstants(cmd, k->layout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, push_size, &push_values[0]);
     }

@@ -20,11 +20,11 @@ const char* ocl_get_type_name(ace_dtype_t dtype) {
         case ACE_DTYPE_INT32:    return "int";
         case ACE_DTYPE_INT64:    return "long";
         case ACE_DTYPE_FLOAT16:
-            /* 设备支持 FP16 扩展时使用原生 half，否则使用 uint 模拟 */
-            return g_device_exts.has_fp16 ? "half" : "uint";
+            /* 设备支持 FP16 扩展时使用原生 half，否则使用 ushort 模拟 */
+            return g_device_exts.has_fp16 ? "half" : "ushort";
         case ACE_DTYPE_BFLOAT16:
-            /* BF16 总是使用 uint 模拟（OpenCL 无原生支持） */
-            return "uint";
+            /* BF16 总是使用 ushort 模拟（OpenCL 无原生支持） */
+            return "ushort";
         case ACE_DTYPE_INT8:     return "char";
         case ACE_DTYPE_UINT8:    return "uchar";
         case ACE_DTYPE_INT16:    return "short";
@@ -64,10 +64,10 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
     extern ocl_device_extensions_t g_device_exts;
     
     if (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16) {
-        /* FP16 模拟模式 - 设备不支持 cl_khr_fp16 */
+        /* FP16 模拟模式 - 设备不支持 cl_khr_fp16，使用 ushort 存储 */
         snprintf(macros_buf, sizeof(macros_buf),
             "/* FP16 模拟内核函数宏 */\n"
-            "float f16_to_f32(uint x) {\n"
+            "float f16_to_f32(ushort x) {\n"
             "    uint sign = (x >> 15u) & 0x1u;\n"
             "    uint exp = (x >> 10u) & 0x1Fu;\n"
             "    uint man = x & 0x3FFu;\n"
@@ -76,7 +76,7 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 13u);\n"
             "    return as_float(result);\n"
             "}\n"
-            "uint f32_to_f16(float x) {\n"
+            "ushort f32_to_f16(float x) {\n"
             "    uint u = as_uint(x);\n"
             "    uint sign = (u >> 16u) & 0x8000u;\n"
             "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
@@ -85,17 +85,17 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "    if (exp > 30u) return sign | 0x7C00u;\n"
             "    return sign | (exp << 10u) | man;\n"
             "}\n"
-            "uint f16_add(uint a, uint b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
-            "uint f16_mul(uint a, uint b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
+            "ushort f16_add(ushort a, ushort b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
+            "ushort f16_mul(ushort a, ushort b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
             "#define kadd(a, b) f16_add(a, b)\n"
             "#define kmul(a, b) f16_mul(a, b)\n"
             "#define K_ZERO 0u\n"
             "#define K_ONE 0x3C00u\n");
     } else if (dtype == ACE_DTYPE_BFLOAT16) {
-        /* BF16 模拟模式 - OpenCL 无原生支持 */
+        /* BF16 模拟模式 - 使用 ushort 存储 */
         snprintf(macros_buf, sizeof(macros_buf),
             "/* BF16 模拟内核函数宏 */\n"
-            "float bf16_to_f32(uint x) {\n"
+            "float bf16_to_f32(ushort x) {\n"
             "    uint sign = (x >> 15u) & 0x1u;\n"
             "    uint exp = (x >> 7u) & 0xFFu;\n"
             "    uint man = x & 0x7Fu;\n"
@@ -104,7 +104,7 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 16u);\n"
             "    return as_float(result);\n"
             "}\n"
-            "uint f32_to_bf16(float x) {\n"
+            "ushort f32_to_bf16(float x) {\n"
             "    uint u = as_uint(x);\n"
             "    uint sign = (u >> 16u) & 0x8000u;\n"
             "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
@@ -113,12 +113,12 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "    if (exp > 254u) return sign | 0x7F80u;\n"
             "    return sign | (exp << 7u) | man;\n"
             "}\n"
-            "uint bf16_add(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
-            "uint bf16_mul(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
+            "ushort bf16_add(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
+            "ushort bf16_mul(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
             "#define kadd(a, b) bf16_add(a, b)\n"
             "#define kmul(a, b) bf16_mul(a, b)\n"
             "#define K_ZERO 0u\n"
-            "#define K_ONE 0x3F800000u\n");
+            "#define K_ONE 0x3F80u\n");
     } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
         snprintf(macros_buf, sizeof(macros_buf),
             "/* INT8/UINT8 内核函数宏 */\n"
