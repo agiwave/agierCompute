@@ -720,6 +720,12 @@ static int test_op(ace_device_t dev, dtype_config_t* cfg, math_op_t op) {
             err = ace_kernel_invoke(dev, kernel, cfg->dtype, N,
                                     (void*[]){&N, &alpha, buf_a, buf_c},
                                     (int[]){sizeof(int), sizeof(double), 0, 0}, 4);
+        } else if (cfg->dtype == ACE_DTYPE_FLOAT16 || cfg->dtype == ACE_DTYPE_BFLOAT16) {
+            uint16_t alpha = cfg->dtype == ACE_DTYPE_FLOAT16 ? 
+                             float_to_float16(2.0f) : float_to_bfloat16(2.0f);
+            err = ace_kernel_invoke(dev, kernel, cfg->dtype, N,
+                                    (void*[]){&N, &alpha, buf_a, buf_c},
+                                    (int[]){sizeof(int), sizeof(uint16_t), 0, 0}, 4);
         } else {
             float alpha = 2.0f;
             err = ace_kernel_invoke(dev, kernel, cfg->dtype, N,
