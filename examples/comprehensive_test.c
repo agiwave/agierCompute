@@ -379,7 +379,29 @@ static int verify_results(void* h_a, void* h_b, void* h_c, int N,
             break;
             
         case OP_SUB:
-            if (cfg->is_float && cfg->elem_size == 4) {
+            if (cfg->dtype == ACE_DTYPE_FLOAT16) {
+                uint16_t* a = (uint16_t*)h_a;
+                uint16_t* b = (uint16_t*)h_b;
+                uint16_t* c = (uint16_t*)h_c;
+                for (int i = 0; i < check_count && ok; i++) {
+                    double fa = (double)float16_to_float(a[i]);
+                    double fb = (double)float16_to_float(b[i]);
+                    double fc = (double)float16_to_float(c[i]);
+                    double expected = fa - fb;
+                    if (fabs(fc - expected) > cfg->tolerance) ok = 0;
+                }
+            } else if (cfg->dtype == ACE_DTYPE_BFLOAT16) {
+                uint16_t* a = (uint16_t*)h_a;
+                uint16_t* b = (uint16_t*)h_b;
+                uint16_t* c = (uint16_t*)h_c;
+                for (int i = 0; i < check_count && ok; i++) {
+                    double fa = (double)bfloat16_to_float(a[i]);
+                    double fb = (double)bfloat16_to_float(b[i]);
+                    double fc = (double)bfloat16_to_float(c[i]);
+                    double expected = fa - fb;
+                    if (fabs(fc - expected) > cfg->tolerance) ok = 0;
+                }
+            } else if (cfg->is_float && cfg->elem_size == 4) {
                 float* a = (float*)h_a;
                 float* b = (float*)h_b;
                 float* c = (float*)h_c;
@@ -395,7 +417,43 @@ static int verify_results(void* h_a, void* h_b, void* h_c, int N,
                     double expected = a[i] - b[i];
                     if (fabs(c[i] - expected) > cfg->tolerance) ok = 0;
                 }
-            } else if (cfg->elem_size <= 4) {
+            } else if (cfg->elem_size == 1) {
+                if (cfg->is_signed) {
+                    int8_t* a = (int8_t*)h_a;
+                    int8_t* b = (int8_t*)h_b;
+                    int8_t* c = (int8_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        int8_t expected = a[i] - b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                } else {
+                    uint8_t* a = (uint8_t*)h_a;
+                    uint8_t* b = (uint8_t*)h_b;
+                    uint8_t* c = (uint8_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        uint8_t expected = a[i] - b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                }
+            } else if (cfg->elem_size == 2) {
+                if (cfg->is_signed) {
+                    int16_t* a = (int16_t*)h_a;
+                    int16_t* b = (int16_t*)h_b;
+                    int16_t* c = (int16_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        int16_t expected = a[i] - b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                } else {
+                    uint16_t* a = (uint16_t*)h_a;
+                    uint16_t* b = (uint16_t*)h_b;
+                    uint16_t* c = (uint16_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        uint16_t expected = a[i] - b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                }
+            } else if (cfg->elem_size == 4) {
                 int32_t* a = (int32_t*)h_a;
                 int32_t* b = (int32_t*)h_b;
                 int32_t* c = (int32_t*)h_c;
@@ -403,11 +461,41 @@ static int verify_results(void* h_a, void* h_b, void* h_c, int N,
                     int32_t expected = a[i] - b[i];
                     if (c[i] != expected) ok = 0;
                 }
+            } else {
+                int64_t* a = (int64_t*)h_a;
+                int64_t* b = (int64_t*)h_b;
+                int64_t* c = (int64_t*)h_c;
+                for (int i = 0; i < check_count && ok; i++) {
+                    int64_t expected = a[i] - b[i];
+                    if (c[i] != expected) ok = 0;
+                }
             }
             break;
             
         case OP_MUL:
-            if (cfg->is_float && cfg->elem_size == 4) {
+            if (cfg->dtype == ACE_DTYPE_FLOAT16) {
+                uint16_t* a = (uint16_t*)h_a;
+                uint16_t* b = (uint16_t*)h_b;
+                uint16_t* c = (uint16_t*)h_c;
+                for (int i = 0; i < check_count && ok; i++) {
+                    double fa = (double)float16_to_float(a[i]);
+                    double fb = (double)float16_to_float(b[i]);
+                    double fc = (double)float16_to_float(c[i]);
+                    double expected = fa * fb;
+                    if (fabs(fc - expected) > cfg->tolerance) ok = 0;
+                }
+            } else if (cfg->dtype == ACE_DTYPE_BFLOAT16) {
+                uint16_t* a = (uint16_t*)h_a;
+                uint16_t* b = (uint16_t*)h_b;
+                uint16_t* c = (uint16_t*)h_c;
+                for (int i = 0; i < check_count && ok; i++) {
+                    double fa = (double)bfloat16_to_float(a[i]);
+                    double fb = (double)bfloat16_to_float(b[i]);
+                    double fc = (double)bfloat16_to_float(c[i]);
+                    double expected = fa * fb;
+                    if (fabs(fc - expected) > cfg->tolerance) ok = 0;
+                }
+            } else if (cfg->is_float && cfg->elem_size == 4) {
                 float* a = (float*)h_a;
                 float* b = (float*)h_b;
                 float* c = (float*)h_c;
@@ -423,7 +511,43 @@ static int verify_results(void* h_a, void* h_b, void* h_c, int N,
                     double expected = a[i] * b[i];
                     if (fabs(c[i] - expected) > cfg->tolerance) ok = 0;
                 }
-            } else if (cfg->elem_size <= 4) {
+            } else if (cfg->elem_size == 1) {
+                if (cfg->is_signed) {
+                    int8_t* a = (int8_t*)h_a;
+                    int8_t* b = (int8_t*)h_b;
+                    int8_t* c = (int8_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        int8_t expected = a[i] * b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                } else {
+                    uint8_t* a = (uint8_t*)h_a;
+                    uint8_t* b = (uint8_t*)h_b;
+                    uint8_t* c = (uint8_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        uint8_t expected = a[i] * b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                }
+            } else if (cfg->elem_size == 2) {
+                if (cfg->is_signed) {
+                    int16_t* a = (int16_t*)h_a;
+                    int16_t* b = (int16_t*)h_b;
+                    int16_t* c = (int16_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        int16_t expected = a[i] * b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                } else {
+                    uint16_t* a = (uint16_t*)h_a;
+                    uint16_t* b = (uint16_t*)h_b;
+                    uint16_t* c = (uint16_t*)h_c;
+                    for (int i = 0; i < check_count && ok; i++) {
+                        uint16_t expected = a[i] * b[i];
+                        if (c[i] != expected) ok = 0;
+                    }
+                }
+            } else if (cfg->elem_size == 4) {
                 int32_t* a = (int32_t*)h_a;
                 int32_t* b = (int32_t*)h_b;
                 int32_t* c = (int32_t*)h_c;
