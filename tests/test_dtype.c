@@ -147,7 +147,8 @@ static void init_test_data(void* data_a, void* data_b, int N, dtype_config_t* cf
         int8_t* b = (int8_t*)data_b;
         for (int i = 0; i < N; i++) {
             a[i] = (int8_t)((i % 10) - 5);
-            b[i] = (int8_t)(((i * 2) % 10) - 5);
+            b[i] = (int8_t)(((i * 2) % 10) - 4);  /* 避免 b=0 */
+            if (b[i] == 0) b[i] = 1;  /* 确保除数不为零 */
         }
     } else if (cfg->dtype == ACE_DTYPE_UINT8) {
         uint8_t* a = (uint8_t*)data_a;
@@ -155,27 +156,31 @@ static void init_test_data(void* data_a, void* data_b, int N, dtype_config_t* cf
         for (int i = 0; i < N; i++) {
             a[i] = (uint8_t)(i % 10);
             b[i] = (uint8_t)((i * 2) % 10);
+            if (b[i] == 0) b[i] = 1;  /* 确保除数不为零 */
         }
     } else if (cfg->dtype == ACE_DTYPE_INT16) {
         int16_t* a = (int16_t*)data_a;
         int16_t* b = (int16_t*)data_b;
         for (int i = 0; i < N; i++) {
             a[i] = (int16_t)((i % 10) - 5);
-            b[i] = (int16_t)(((i * 2) % 10) - 5);
+            b[i] = (int16_t)(((i * 2) % 10) - 4);  /* 避免 b=0 */
+            if (b[i] == 0) b[i] = 1;  /* 确保除数不为零 */
         }
     } else if (cfg->dtype == ACE_DTYPE_INT32) {
         int32_t* a = (int32_t*)data_a;
         int32_t* b = (int32_t*)data_b;
         for (int i = 0; i < N; i++) {
             a[i] = (i % 10) - 5;
-            b[i] = ((i * 2) % 10) - 5;
+            b[i] = ((i * 2) % 10) - 4;  /* 避免 b=0 */
+            if (b[i] == 0) b[i] = 1;  /* 确保除数不为零 */
         }
     } else if (cfg->dtype == ACE_DTYPE_INT64) {
         int64_t* a = (int64_t*)data_a;
         int64_t* b = (int64_t*)data_b;
         for (int i = 0; i < N; i++) {
             a[i] = (i % 10) - 5;
-            b[i] = ((i * 2) % 10) - 5;
+            b[i] = ((i * 2) % 10) - 4;  /* 避免 b=0 */
+            if (b[i] == 0) b[i] = 1;  /* 确保除数不为零 */
         }
     }
 }
@@ -220,10 +225,23 @@ static int verify_result(void* h_a, void* h_b, void* h_c, int idx,
         case OP_SUB:   expected = a - b; break;
         case OP_DIV:
             if (fabs(b) < 1e-10) return 1; /* 跳过除零 */
-            expected = a / b;
+            if (!cfg->is_float) {
+                /* 整数除法：向零取整 */
+                expected = (double)((int64_t)(a / b));
+            } else {
+                expected = a / b;
+            }
             break;
-        case OP_SCALE: expected = 2.0 * a; break;
-        default: return 0;
+        case OP_SCALE: 
+            if (!cfg->is_float) {
+                /* 整数缩放：整数乘法 */
+                expected = a * 2.0;
+            } else {
+                expected = 2.0 * a; 
+            }
+            break;
+        default:
+            return 0;
     }
 
     /* 处理无符号整数减法的溢出回绕 */
@@ -318,6 +336,31 @@ static int test_op(ace_device_t dev, dtype_config_t* cfg, op_type_t op) {
                 err = ace_kernel_invoke(dev, _ace_get_vec_scale(), cfg->dtype, N,
                     (void*[]){&n, &alpha, buf_a, buf_c},
                     (int[]){sizeof(int), sizeof(uint16_t), 0, 0}, 4);
+            } else if (cfg->dtype == ACE_DTYPE_INT32) {
+                int32_t alpha = 2;
+                err = ace_kernel_invoke(dev, _ace_get_vec_scale(), cfg->dtype, N,
+                    (void*[]){&n, &alpha, buf_a, buf_c},
+                    (int[]){sizeof(int), sizeof(int32_t), 0, 0}, 4);
+            } else if (cfg->dtype == ACE_DTYPE_INT64) {
+                int64_t alpha = 2;
+                err = ace_kernel_invoke(dev, _ace_get_vec_scale(), cfg->dtype, N,
+                    (void*[]){&n, &alpha, buf_a, buf_c},
+                    (int[]){sizeof(int), sizeof(int64_t), 0, 0}, 4);
+            } else if (cfg->dtype == ACE_DTYPE_INT8) {
+                int8_t alpha = 2;
+                err = ace_kernel_invoke(dev, _ace_get_vec_scale(), cfg->dtype, N,
+                    (void*[]){&n, &alpha, buf_a, buf_c},
+                    (int[]){sizeof(int), sizeof(int8_t), 0, 0}, 4);
+            } else if (cfg->dtype == ACE_DTYPE_UINT8) {
+                uint8_t alpha = 2;
+                err = ace_kernel_invoke(dev, _ace_get_vec_scale(), cfg->dtype, N,
+                    (void*[]){&n, &alpha, buf_a, buf_c},
+                    (int[]){sizeof(int), sizeof(uint8_t), 0, 0}, 4);
+            } else if (cfg->dtype == ACE_DTYPE_INT16) {
+                int16_t alpha = 2;
+                err = ace_kernel_invoke(dev, _ace_get_vec_scale(), cfg->dtype, N,
+                    (void*[]){&n, &alpha, buf_a, buf_c},
+                    (int[]){sizeof(int), sizeof(int16_t), 0, 0}, 4);
             } else {
                 float alpha = 2.0f;
                 err = ace_kernel_invoke(dev, _ace_get_vec_scale(), cfg->dtype, N,
@@ -379,15 +422,6 @@ static void test_device(ace_device_type_t type, int idx, const char* backend_nam
         dtype_config_t* cfg = &dtype_configs[d];
 
         for (int o = 0; o < OP_COUNT; o++) {
-            /* 跳过整数类型的除法操作 */
-            if (!cfg->is_float && (o == OP_DIV || o == OP_SCALE)) {
-                printf("  [%2d/%2d][%2d/%2d] %-10s %-6s ... SKIP\n",
-                       d + 1, (int)NUM_DTYPES, o + 1, OP_COUNT,
-                       cfg->name, op_names[o]);
-                g_stats.skipped++;
-                continue;
-            }
-
             printf("  [%2d/%2d][%2d/%2d] %-10s %-6s ... ",
                    d + 1, (int)NUM_DTYPES, o + 1, OP_COUNT,
                    cfg->name, op_names[o]);
