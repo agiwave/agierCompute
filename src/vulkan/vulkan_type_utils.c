@@ -1,6 +1,6 @@
 /**
  * @file vulkan_type_utils.c
- * @brief Vulkan 类型辅助工具 - 基于表驱动架构
+ * @brief Vulkan 类型辅助工具 - 基于设备级别类型表
  *
  * 设计说明:
  * - 所有类型相关信息在 dtype_info_t 表中
@@ -13,17 +13,17 @@
 #include <ctype.h>
 #include <vulkan/vulkan.h>
 #include "ace.h"
-#include "vulkan_dtype_table.h"
+#include "vulkan_backend.h"
 #include "vulkan_kernel_ops_table.h"
 
 /* ============================================================================
  * 公共 API：GLSL 代码翻译
  * ============================================================================ */
 
-char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
-                           int* n_buffers, int* n_scalars) {
+char* vk_translate_to_glsl(const vk_device_internal_t* dev, const char* name, const char* src, 
+                           ace_dtype_t dtype, int* n_buffers, int* n_scalars) {
     (void)name;
-    const dtype_info_t* type = dtype_info(dtype);
+    const dtype_info_t* type = vk_dtype_info(&dev->dtype_table, dtype);
     
     /* 解析函数体 */
     const char* body_start = strchr(src, '{');

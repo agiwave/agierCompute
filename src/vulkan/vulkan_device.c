@@ -89,8 +89,10 @@ ace_error_t vk_device_get(int idx, void** dev) {
     vkGetPhysicalDeviceProperties(d->dev->physical_device, &d->dev->props);
     vkGetPhysicalDeviceMemoryProperties(d->dev->physical_device, &d->dev->mem_props);
 
-    /* 检测设备特性 */
-    vk_detect_device_features(d->dev->physical_device);
+    /* 检测设备特性并初始化类型表 */
+    vk_device_features_t features;
+    vk_detect_device_features(d->dev->physical_device, &features);
+    vk_dtype_table_init(&d->dtype_table, &features);
 
     uint32_t qcount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(d->dev->physical_device, &qcount, NULL);

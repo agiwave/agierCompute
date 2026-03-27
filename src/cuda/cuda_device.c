@@ -63,6 +63,9 @@ ace_error_t cuda_device_get(int idx, void** dev) {
         return ACE_ERROR_DEVICE;
     }
 
+    /* 初始化设备级别的类型表 */
+    cuda_dtype_table_init(&d->dtype_table, d->compute_major, d->compute_minor);
+
     /* 初始化内核缓存 */
     memset(&d->kernel_cache, 0, sizeof(d->kernel_cache));
 

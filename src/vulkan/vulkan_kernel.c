@@ -57,7 +57,7 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
 
     /* 翻译 GLSL 代码 */
     ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
-    char* glsl_src = vk_translate_to_glsl(kernel_def->name, kernel_def->src, dtype, n_buffers, n_scalars);
+    char* glsl_src = vk_translate_to_glsl(d, kernel_def->name, kernel_def->src, dtype, n_buffers, n_scalars);
     k->n_buffers = *n_buffers;
     k->n_scalars = *n_scalars;
 

@@ -1,6 +1,6 @@
 /**
  * @file opencl_type_utils.c
- * @brief OpenCL 类型辅助工具 - 基于表驱动架构
+ * @brief OpenCL 类型辅助工具 - 基于设备级别类型表
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,11 +9,10 @@
 #include <CL/cl.h>
 #include "ace.h"
 #include "opencl_backend.h"
-#include "opencl_dtype_table.h"
 #include "opencl_kernel_ops_table.h"
 
-char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
-    const dtype_info_t* type = opencl_dtype_info(dtype);
+char* ocl_translate_code(const ocl_device_t* dev, const char* name, const char* src, ace_dtype_t dtype) {
+    const dtype_info_t* type = ocl_dtype_info(&dev->dtype_table, dtype);
     
     const char* body_start = strchr(src, '{');
     const char* body_end = strrchr(src, '}');

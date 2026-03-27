@@ -1,6 +1,6 @@
 /**
  * @file cuda_type_utils.c
- * @brief CUDA 类型辅助工具 - 基于表驱动架构
+ * @brief CUDA 类型辅助工具 - 基于设备级别类型表
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,11 +9,11 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include "ace.h"
-#include "cuda_dtype_table.h"
+#include "cuda_backend.h"
 #include "cuda_kernel_ops_table.h"
 
-char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
-    const dtype_info_t* type = cuda_dtype_info(dtype);
+char* cuda_translate_code(const cuda_device_t* dev, const char* name, const char* src, ace_dtype_t dtype) {
+    const dtype_info_t* type = cuda_dtype_info(&dev->dtype_table, dtype);
     
     const char* body_start = strchr(src, '{');
     const char* body_end = strrchr(src, '}');

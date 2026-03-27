@@ -7,6 +7,7 @@
 
 #include "ace.h"
 #include "../ace_backend_api.h"
+#include "vulkan_dtype_table.h"
 
 #ifdef VULKAN_AVAILABLE
 
@@ -63,36 +64,23 @@ typedef struct {
     int cmd_buffer_index;
     VkFence fences[MAX_CMD_BUFFERS];
     VkSemaphore semaphores[MAX_CMD_BUFFERS];
+    vk_dtype_table_t dtype_table;  /* 设备级别的类型表 */
 } vk_device_internal_t;
-
-/* ============================================================================
- * Device features
- * ============================================================================ */
-
-typedef struct {
-    int has_float16;
-    int has_int8;
-    int has_int16;
-    int has_16bit_storage;
-    int has_8bit_storage;
-    int has_bfloat16;
-    /* 64 位类型支持 */
-    int has_float64;      /* shaderFloat64 支持 */
-    int has_int64;        /* shaderInt64 支持 */
-    int has_64bit_storage; /* storageBuffer64BitAccess 支持 */
-} vk_device_features_t;
 
 /* ============================================================================
  * Type utilities (vulkan_type_utils.c)
  * ============================================================================ */
 
-void vk_detect_device_features(VkPhysicalDevice physical_device);
-int vk_supports_native_storage(ace_dtype_t dtype);
-const char* vk_get_buffer_type_name(ace_dtype_t dtype);
-const char* vk_get_compute_type_name(ace_dtype_t dtype);
-const char* vk_get_glsl_extension(ace_dtype_t dtype);
-int vk_is_float_dtype(ace_dtype_t dtype);
-char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype, int* n_buffers, int* n_scalars);
+/* 检测设备特性 */
+void vk_detect_device_features(VkPhysicalDevice physical_device, vk_device_features_t* features);
+
+/* 设备级别的类型信息访问 */
+static inline const char* vk_get_type_name(const vk_device_internal_t* dev, ace_dtype_t dtype) {
+    return vk_dtype_info(&dev->dtype_table, dtype)->name;
+}
+
+char* vk_translate_to_glsl(const vk_device_internal_t* dev, const char* name, const char* src, 
+                           ace_dtype_t dtype, int* n_buffers, int* n_scalars);
 
 /* ============================================================================
  * Device management (vulkan_device.c)

@@ -1,6 +1,8 @@
 /**
  * @file cuda_dtype_table.h
- * @brief CUDA 数据类型表
+ * @brief CUDA 数据类型表 - 设备级别
+ * 
+ * 每个设备拥有独立的类型表，根据设备的计算能力动态生成。
  */
 #ifndef CUDA_DTYPE_TABLE_H
 #define CUDA_DTYPE_TABLE_H
@@ -28,12 +30,31 @@ typedef struct {
     int needs_emulation;
 } dtype_info_t;
 
-const dtype_info_t* cuda_get_dtype_table(void);
+/**
+ * @brief 设备级别的数据类型表
+ */
+typedef struct {
+    dtype_info_t entries[ACE_DTYPE_BOOL + 1];
+    int compute_capability;  /* 设备计算能力 */
+} cuda_dtype_table_t;
 
-static inline const dtype_info_t* cuda_dtype_info(ace_dtype_t dtype) {
-    const dtype_info_t* table = cuda_get_dtype_table();
-    if (dtype < 0 || dtype > ACE_DTYPE_BOOL) return &table[0];
-    return &table[dtype];
+/**
+ * @brief 根据设备计算能力初始化类型表
+ * @param table 要初始化的类型表
+ * @param compute_major 计算能力主版本
+ * @param compute_minor 计算能力次版本
+ */
+void cuda_dtype_table_init(cuda_dtype_table_t* table, int compute_major, int compute_minor);
+
+/**
+ * @brief 获取类型信息
+ * @param table 设备的类型表
+ * @param dtype 数据类型
+ * @return 类型信息指针
+ */
+static inline const dtype_info_t* cuda_dtype_info(const cuda_dtype_table_t* table, ace_dtype_t dtype) {
+    if (!table || dtype < 0 || dtype > ACE_DTYPE_BOOL) return &table->entries[0];
+    return &table->entries[dtype];
 }
 
 #ifdef __cplusplus

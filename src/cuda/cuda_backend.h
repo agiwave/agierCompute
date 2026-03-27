@@ -41,6 +41,7 @@ typedef struct {
     int compute_major;
     int compute_minor;
     cuda_kernel_cache_t kernel_cache;
+    cuda_dtype_table_t dtype_table;  /* 设备级别的类型表 */
 } cuda_device_t;
 
 typedef struct {
@@ -52,13 +53,12 @@ typedef struct {
  * Type utilities (cuda_type_utils.c)
  * ============================================================================ */
 
-const dtype_info_t* cuda_get_dtype_table(void);
-static inline const char* cuda_get_type_name(ace_dtype_t dtype) {
-    return cuda_dtype_info(dtype)->name;
+/* 设备级别的类型信息访问 */
+static inline const char* cuda_get_type_name(const cuda_device_t* dev, ace_dtype_t dtype) {
+    return cuda_dtype_info(&dev->dtype_table, dtype)->name;
 }
-const char* cuda_get_type_headers(ace_dtype_t dtype);
-const char* cuda_get_type_macros(ace_dtype_t dtype);
-char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype);
+
+char* cuda_translate_code(const cuda_device_t* dev, const char* name, const char* src, ace_dtype_t dtype);
 
 /* ============================================================================
  * Device management (cuda_device.c)

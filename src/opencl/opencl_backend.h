@@ -41,6 +41,7 @@ typedef struct {
     int compute_units;
     int max_threads;
     ocl_kernel_cache_t kernel_cache;
+    ocl_dtype_table_t dtype_table;  /* 设备级别的类型表 */
 } ocl_device_t;
 
 typedef struct {
@@ -51,29 +52,16 @@ typedef struct {
 /* Global platform */
 extern cl_platform_id g_opencl_platform;
 
-/* Device extensions status */
-typedef struct {
-    int has_fp16;              /* cl_khr_fp16 */
-    int has_fp64;              /* cl_khr_fp64 */
-    int has_int64;             /* native support */
-    int has_int8;              /* cl_khr_int8 */
-    int has_int16;             /* cl_khr_int16 */
-    int has_8bit_storage;      /* cl_khr_8bit_storage */
-    int has_16bit_storage;     /* cl_khr_16bit_storage */
-} ocl_device_extensions_t;
-
-extern ocl_device_extensions_t g_device_exts;
-
 /* ============================================================================
  * Type utilities (opencl_type_utils.c)
  * ============================================================================ */
 
-const dtype_info_t* opencl_get_dtype_table(void);
-static inline const char* ocl_get_type_name(ace_dtype_t dtype) {
-    return opencl_dtype_info(dtype)->name;
+/* 设备级别的类型信息访问 */
+static inline const char* ocl_get_type_name(const ocl_device_t* dev, ace_dtype_t dtype) {
+    return ocl_dtype_info(&dev->dtype_table, dtype)->name;
 }
-const char* ocl_get_extension(ace_dtype_t dtype);
-char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype);
+
+char* ocl_translate_code(const ocl_device_t* dev, const char* name, const char* src, ace_dtype_t dtype);
 
 /* ============================================================================
  * Device management (opencl_device.c)

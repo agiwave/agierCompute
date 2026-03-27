@@ -29,7 +29,7 @@ ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     /* 如果未缓存，编译内核 */
     if (!cached) {
         ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
-        char* translated = ocl_translate_code(kernel_def->name, kernel_def->src, dtype);
+        char* translated = ocl_translate_code(d, kernel_def->name, kernel_def->src, dtype);
         
         /* 调试输出：打印生成的 OpenCL 代码 */
         printf("[OpenCL] Generated code for %s:\n---\n%s\n---\n", kernel_def->name, translated);
@@ -51,7 +51,7 @@ ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             char* log = (char*)malloc(log_size);
             clGetProgramBuildInfo(prog, d->device, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
             printf("[OpenCL] Compile error for %s (%s):\n%s\n", kernel_def->name,
-                   ocl_get_type_name(dtype), log);
+                   ocl_get_type_name(d, dtype), log);
             free(log);
             clReleaseProgram(prog);
             free(translated);

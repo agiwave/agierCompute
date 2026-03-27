@@ -19,7 +19,7 @@
 static ace_error_t compile_and_cache_kernel(cuda_device_t* d, ace_kernel_def_t* kernel_def,
                                              int kernel_id, int bucket, cuda_kernel_t** out_kernel) {
     ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
-    char* cuda_src = cuda_translate_code(kernel_def->name, kernel_def->src, dtype);
+    char* cuda_src = cuda_translate_code(d, kernel_def->name, kernel_def->src, dtype);
     
     /* 调试输出：打印生成的 CUDA 代码 */
     printf("[CUDA] Generated code for %s:\n---\n%s\n---\n", kernel_def->name, cuda_src);
@@ -69,7 +69,7 @@ static ace_error_t compile_and_cache_kernel(cuda_device_t* d, ace_kernel_def_t* 
         char* log = (char*)malloc(log_size);
         nvrtcGetProgramLog(prog, log);
         printf("[CUDA] Compile error for %s (%s):\n%s\n", kernel_def->name,
-               cuda_get_type_name(dtype), log);
+               cuda_get_type_name(d, dtype), log);
         free(log);
         nvrtcDestroyProgram(&prog);
         free(cuda_src);

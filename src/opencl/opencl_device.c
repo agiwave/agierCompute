@@ -12,35 +12,32 @@
 
 cl_platform_id g_opencl_platform;
 
-/* 设备扩展支持状态 - 全局变量 */
-ocl_device_extensions_t g_device_exts = {0};
-
 /* 检查设备扩展支持 */
-static void check_device_extensions(cl_device_id device) {
+static void check_device_extensions(cl_device_id device, ocl_device_extensions_t* exts) {
     char extensions[2048] = "";
     clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
 
     /* FP16/BF16/FP64 支持检测 */
-    g_device_exts.has_fp16 = (strstr(extensions, "cl_khr_fp16") != NULL);
-    g_device_exts.has_fp64 = (strstr(extensions, "cl_khr_fp64") != NULL);
+    exts->has_fp16 = (strstr(extensions, "cl_khr_fp16") != NULL);
+    exts->has_fp64 = (strstr(extensions, "cl_khr_fp64") != NULL);
     
     /* INT64: OpenCL 1.0+ 都支持 */
-    g_device_exts.has_int64 = 1;
+    exts->has_int64 = 1;
     
     /* INT8/INT16: 通过扩展检测 */
-    g_device_exts.has_int8 = (strstr(extensions, "cl_khr_int8") != NULL);
-    g_device_exts.has_int16 = (strstr(extensions, "cl_khr_int16") != NULL);
+    exts->has_int8 = (strstr(extensions, "cl_khr_int8") != NULL);
+    exts->has_int16 = (strstr(extensions, "cl_khr_int16") != NULL);
     
     /* 8/16 位存储支持 */
-    g_device_exts.has_8bit_storage = (strstr(extensions, "cl_khr_8bit_storage") != NULL);
-    g_device_exts.has_16bit_storage = (strstr(extensions, "cl_khr_16bit_storage") != NULL);
+    exts->has_8bit_storage = (strstr(extensions, "cl_khr_8bit_storage") != NULL);
+    exts->has_16bit_storage = (strstr(extensions, "cl_khr_16bit_storage") != NULL);
 
     printf("[OpenCL] Device extensions: FP16=%s, FP64=%s, INT64=%s, INT8=%s, INT16=%s\n",
-           g_device_exts.has_fp16 ? "YES" : "NO",
-           g_device_exts.has_fp64 ? "YES" : "NO",
-           g_device_exts.has_int64 ? "YES" : "NO",
-           g_device_exts.has_int8 ? "YES" : "NO",
-           g_device_exts.has_int16 ? "YES" : "NO");
+           exts->has_fp16 ? "YES" : "NO",
+           exts->has_fp64 ? "YES" : "NO",
+           exts->has_int64 ? "YES" : "NO",
+           exts->has_int8 ? "YES" : "NO",
+           exts->has_int16 ? "YES" : "NO");
 }
 
 ace_error_t ocl_init(ace_backend_info_t* info) {
@@ -114,8 +111,10 @@ ace_error_t ocl_device_get(int idx, void** dev) {
         return ACE_ERROR_DEVICE;
     }
 
-    /* 检查设备扩展支持 */
-    check_device_extensions(d->device);
+    /* 检查设备扩展支持并初始化类型表 */
+    ocl_device_extensions_t exts;
+    check_device_extensions(d->device, &exts);
+    ocl_dtype_table_init(&d->dtype_table, &exts);
 
     /* 初始化内核缓存 */
     memset(&d->kernel_cache, 0, sizeof(d->kernel_cache));
