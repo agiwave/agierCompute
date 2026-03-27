@@ -30,6 +30,9 @@ ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     if (!cached) {
         ace_dtype_t dtype = (ace_dtype_t)kernel_def->dtype;
         char* translated = ocl_translate_code(kernel_def->name, kernel_def->src, dtype);
+        
+        /* 调试输出：打印生成的 OpenCL 代码 */
+        printf("[OpenCL] Generated code for %s:\n---\n%s\n---\n", kernel_def->name, translated);
 
         cl_int err;
         const char* srcs[1] = { translated };
@@ -85,7 +88,8 @@ ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
             }
             clSetKernelArg(cached->kernel, i, sizeof(cl_mem), &buf->mem);
         } else {
-            clSetKernelArg(cached->kernel, i, sizeof(int), args[i]);
+            /* 根据参数大小传递正确的值 */
+            clSetKernelArg(cached->kernel, i, sizes[i], args[i]);
         }
     }
 

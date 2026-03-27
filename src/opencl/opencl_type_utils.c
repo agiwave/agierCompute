@@ -53,11 +53,11 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
         strcat(out, "__kernel void ");
         strcat(out, name);
         
-        /* 复制参数列表，为指针参数添加 __global */
+        /* 简单处理：直接复制参数列表，在 * 前添加 __global */
         const char* p = params_start;
         while (p <= params_end) {
-            if (*p == '*') {
-                strcat(out, " __global ");
+            if (*p == '*' && p > params_start && *(p-1) != '*' && *(p+1) != '*') {
+                strcat(out, " __global");
             }
             char ch[2] = {*p, '\0'};
             strcat(out, ch);
