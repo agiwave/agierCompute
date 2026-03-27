@@ -1,10 +1,21 @@
 /**
  * @file opencl_type_utils.c
  * @brief OpenCL 类型辅助工具和动态 kxxx 函数注入
+ * 
+ * 编译流程:
+ * 1. 扫描内核代码，找到所有 kxxx( 模式的函数调用
+ * 2. 遍历所有找到的 kxxx 函数
+ * 3. 对每个 kxxx，检测类型是否原生支持
+ * 4. 原生支持：注入 #define kxxx(a,b) ((a) op (b))
+ * 5. 非原生支持：
+ *    - 如果类型定义未注入：先注入类型定义和转换函数
+ *    - 注入 kxxx 的模拟实现函数
+ * 6. 编译最终的内核字符串
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <CL/cl.h>
 #include "ace.h"
 
@@ -17,7 +28,32 @@ typedef struct {
 extern ocl_device_extensions_t g_device_exts;
 
 /* ============================================================================
- * 类型名称映射 - 根据设备能力选择原生或模拟
+ * 设备能力查询
+ * ============================================================================ */
+
+static int ocl_supports_native_kfunc(ace_dtype_t dtype) {
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:
+        case ACE_DTYPE_INT32:
+        case ACE_DTYPE_INT8:
+        case ACE_DTYPE_UINT8:
+        case ACE_DTYPE_INT16:
+            return 1;  /* 原生支持 */
+        case ACE_DTYPE_FLOAT64:
+            return g_device_exts.has_fp64;
+        case ACE_DTYPE_FLOAT16:
+            return g_device_exts.has_fp16;
+        case ACE_DTYPE_BFLOAT16:
+            return 0;  /* BF16 总是需要模拟 */
+        case ACE_DTYPE_INT64:
+            return g_device_exts.has_int64;
+        default:
+            return 1;
+    }
+}
+
+/* ============================================================================
+ * 类型名称和扩展
  * ============================================================================ */
 
 const char* ocl_get_type_name(ace_dtype_t dtype) {
@@ -29,17 +65,13 @@ const char* ocl_get_type_name(ace_dtype_t dtype) {
         case ACE_DTYPE_FLOAT16:
             return g_device_exts.has_fp16 ? "half" : "ushort";
         case ACE_DTYPE_BFLOAT16:
-            return "ushort";  /* BF16 总是使用 ushort 模拟 */
+            return "ushort";
         case ACE_DTYPE_INT8:     return "char";
         case ACE_DTYPE_UINT8:    return "uchar";
         case ACE_DTYPE_INT16:    return "short";
         default:                 return "float";
     }
 }
-
-/* ============================================================================
- * 扩展声明
- * ============================================================================ */
 
 const char* ocl_get_extension(ace_dtype_t dtype) {
     switch (dtype) {
@@ -52,17 +84,27 @@ const char* ocl_get_extension(ace_dtype_t dtype) {
     }
 }
 
+const char* ocl_get_type_macros(ace_dtype_t dtype) {
+    static char macros_buf[1024];
+    const char* type_name = ocl_get_type_name(dtype);
+    snprintf(macros_buf, sizeof(macros_buf),
+        "#define K_ZERO (%s)0\n"
+        "#define K_ONE (%s)1\n"
+        "#define K_NEG_ONE (%s)-1\n",
+        type_name, type_name, type_name);
+    return macros_buf;
+}
+
 /* ============================================================================
- * 只包含类型转换函数，运算函数动态生成
+ * 类型定义和转换函数（用于非原生支持的类型）
  * ============================================================================ */
 
-static const char* get_type_converters(ace_dtype_t dtype) {
-    static char conv_buf[4096];
-    
+static const char* get_type_definition(ace_dtype_t dtype) {
+    static char def_buf[4096];
+
     if (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16) {
-        /* FP16 模拟模式 - 只定义转换函数 */
-        snprintf(conv_buf, sizeof(conv_buf),
-            "/* FP16 类型转换函数 */\n"
+        snprintf(def_buf, sizeof(def_buf),
+            "/* FP16 模拟类型定义和转换函数 */\n"
             "float f16_to_f32(ushort x) {\n"
             "    uint sign = (x >> 15u) & 0x1u;\n"
             "    uint exp = (x >> 10u) & 0x1Fu;\n"
@@ -81,11 +123,10 @@ static const char* get_type_converters(ace_dtype_t dtype) {
             "    if (exp > 30u) return sign | 0x7C00u;\n"
             "    return sign | (exp << 10u) | man;\n"
             "}\n");
-        return conv_buf;
+        return def_buf;
     } else if (dtype == ACE_DTYPE_BFLOAT16) {
-        /* BF16 模拟模式 - 只定义转换函数 */
-        snprintf(conv_buf, sizeof(conv_buf),
-            "/* BF16 类型转换函数 */\n"
+        snprintf(def_buf, sizeof(def_buf),
+            "/* BF16 模拟类型定义和转换函数 */\n"
             "float bf16_to_f32(ushort x) {\n"
             "    uint sign = (x >> 15u) & 0x1u;\n"
             "    uint exp = (x >> 7u) & 0xFFu;\n"
@@ -104,107 +145,148 @@ static const char* get_type_converters(ace_dtype_t dtype) {
             "    if (exp == 255u) return sign | 0x7F80u;\n"
             "    return sign | (exp << 7u) | man;\n"
             "}\n");
-        return conv_buf;
+        return def_buf;
     }
     return "";
 }
 
 /* ============================================================================
- * 动态 kxxx 函数注入
+ * 核心注入函数：注入单个 kxxx 函数
  * ============================================================================ */
 
-static void inject_used_k_functions(char* out, size_t out_size, const char* code, ace_dtype_t dtype) {
-    int is_fp16_sim = (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16);
-    int is_bf16 = (dtype == ACE_DTYPE_BFLOAT16);
-    
-    if (!is_fp16_sim && !is_bf16) {
-        return;  /* 只有模拟模式需要注入 */
+static int inject_k_function_impl(char* buf, const char* func_name, ace_dtype_t dtype, int is_native) {
+    if (is_native) {
+        /* 原生支持：注入宏定义 */
+        if (strcmp(func_name, "kadd") == 0)
+            return sprintf(buf, "#define kadd(a, b) ((a) + (b))\n");
+        if (strcmp(func_name, "ksub") == 0)
+            return sprintf(buf, "#define ksub(a, b) ((a) - (b))\n");
+        if (strcmp(func_name, "kmul") == 0)
+            return sprintf(buf, "#define kmul(a, b) ((a) * (b))\n");
+        if (strcmp(func_name, "kdiv") == 0)
+            return sprintf(buf, "#define kdiv(a, b) ((a) / (b))\n");
+        if (strcmp(func_name, "klt") == 0)
+            return sprintf(buf, "#define klt(a, b) ((a) < (b))\n");
+        if (strcmp(func_name, "kle") == 0)
+            return sprintf(buf, "#define kle(a, b) ((a) <= (b))\n");
+        if (strcmp(func_name, "kgt") == 0)
+            return sprintf(buf, "#define kgt(a, b) ((a) > (b))\n");
+        if (strcmp(func_name, "kge") == 0)
+            return sprintf(buf, "#define kge(a, b) ((a) >= (b))\n");
+        if (strcmp(func_name, "keq") == 0)
+            return sprintf(buf, "#define keq(a, b) ((a) == (b))\n");
+        if (strcmp(func_name, "kne") == 0)
+            return sprintf(buf, "#define kne(a, b) ((a) != (b))\n");
+    } else {
+        /* 非原生支持：注入模拟函数 */
+        const char* type_name = ocl_get_type_name(dtype);
+        const char* to_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f16_to_f32" : "bf16_to_f32";
+        const char* from_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f32_to_f16" : "f32_to_bf16";
+        
+        if (strcmp(func_name, "kadd") == 0)
+            return sprintf(buf, "%s kadd(%s a, %s b) { return %s(%s(a) + %s(b)); }\n",
+                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
+        if (strcmp(func_name, "ksub") == 0)
+            return sprintf(buf, "%s ksub(%s a, %s b) { return %s(%s(a) - %s(b)); }\n",
+                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
+        if (strcmp(func_name, "kmul") == 0)
+            return sprintf(buf, "%s kmul(%s a, %s b) { return %s(%s(a) * %s(b)); }\n",
+                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
+        if (strcmp(func_name, "kdiv") == 0)
+            return sprintf(buf, "%s kdiv(%s a, %s b) { return %s(%s(a) / %s(b)); }\n",
+                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
+        if (strcmp(func_name, "klt") == 0)
+            return sprintf(buf, "bool klt(%s a, %s b) { return %s(a) < %s(b); }\n",
+                          type_name, type_name, to_f32, to_f32);
+        if (strcmp(func_name, "kle") == 0)
+            return sprintf(buf, "bool kle(%s a, %s b) { return %s(a) <= %s(b); }\n",
+                          type_name, type_name, to_f32, to_f32);
+        if (strcmp(func_name, "kgt") == 0)
+            return sprintf(buf, "bool kgt(%s a, %s b) { return %s(a) > %s(b); }\n",
+                          type_name, type_name, to_f32, to_f32);
+        if (strcmp(func_name, "kge") == 0)
+            return sprintf(buf, "bool kge(%s a, %s b) { return %s(a) >= %s(b); }\n",
+                          type_name, type_name, to_f32, to_f32);
+        if (strcmp(func_name, "keq") == 0)
+            return sprintf(buf, "bool keq(%s a, %s b) { return %s(a) == %s(b); }\n",
+                          type_name, type_name, to_f32, to_f32);
+        if (strcmp(func_name, "kne") == 0)
+            return sprintf(buf, "bool kne(%s a, %s b) { return %s(a) != %s(b); }\n",
+                          type_name, type_name, to_f32, to_f32);
     }
+    return 0;
+}
 
+/* ============================================================================
+ * 扫描代码并注入所有找到的 kxxx 函数
+ * ============================================================================ */
+
+static void scan_and_inject(char* out, const char* code, ace_dtype_t dtype,
+                            int* injected_mask, int* type_def_injected) {
+    int is_native = ocl_supports_native_kfunc(dtype);
+    
+    /* 非原生支持：先注入类型定义（如果还未注入） */
+    if (!is_native && !*type_def_injected) {
+        const char* type_def = get_type_definition(dtype);
+        if (type_def && type_def[0]) {
+            char* temp = (char*)malloc(strlen(out) + strlen(type_def) + 10);
+            if (temp) {
+                strcpy(temp, type_def);
+                strcat(temp, "\n");
+                strcat(temp, out);
+                strcpy(out, temp);
+                free(temp);
+                *type_def_injected = 1;
+            }
+        }
+    }
+    
     char inject_buf[8192] = "";
     char* p = inject_buf;
     char* end = inject_buf + sizeof(inject_buf) - 1;
 
-    const char* type_name = "ushort";
-    const char* to_f32 = is_bf16 ? "bf16_to_f32" : "f16_to_f32";
-    const char* from_f32 = is_bf16 ? "f32_to_bf16" : "f32_to_f16";
+    const char* s = code;
+    while (*s) {
+        if (islower(*s) && s[1] && islower(s[1]) && s[2] && islower(s[2])) {
+            const char* start = s;
+            while (islower(*s)) s++;
 
-    /* 检测并注入 kadd */
-    if (strstr(code, "kadd")) {
-        int len = snprintf(p, end - p,
-            "ushort kadd(ushort a, ushort b) { "
-            "  return %s(%s(a) + %s(b)); "
-            "}\n",
-            from_f32, to_f32, to_f32);
-        p += len;
-    }
+            if (*s == '(') {
+                char func_name[16];
+                size_t len = s - start;
+                if (len < sizeof(func_name)) {
+                    strncpy(func_name, start, len);
+                    func_name[len] = '\0';
 
-    /* 检测并注入 ksub */
-    if (strstr(code, "ksub")) {
-        int len = snprintf(p, end - p,
-            "ushort ksub(ushort a, ushort b) { "
-            "  return %s(%s(a) - %s(b)); "
-            "}\n",
-            from_f32, to_f32, to_f32);
-        p += len;
-    }
+                    if (func_name[0] == 'k' && func_name[1] && func_name[2]) {
+                        int func_id = -1;
+                        if (strcmp(func_name, "kadd") == 0) func_id = 0;
+                        else if (strcmp(func_name, "ksub") == 0) func_id = 1;
+                        else if (strcmp(func_name, "kmul") == 0) func_id = 2;
+                        else if (strcmp(func_name, "kdiv") == 0) func_id = 3;
+                        else if (strcmp(func_name, "klt") == 0) func_id = 4;
+                        else if (strcmp(func_name, "kle") == 0) func_id = 5;
+                        else if (strcmp(func_name, "kgt") == 0) func_id = 6;
+                        else if (strcmp(func_name, "kge") == 0) func_id = 7;
+                        else if (strcmp(func_name, "keq") == 0) func_id = 8;
+                        else if (strcmp(func_name, "kne") == 0) func_id = 9;
 
-    /* 检测并注入 kmul */
-    if (strstr(code, "kmul")) {
-        int len = snprintf(p, end - p,
-            "ushort kmul(ushort a, ushort b) { "
-            "  return %s(%s(a) * %s(b)); "
-            "}\n",
-            from_f32, to_f32, to_f32);
-        p += len;
-    }
-
-    /* 检测并注入 kdiv */
-    if (strstr(code, "kdiv")) {
-        int len = snprintf(p, end - p,
-            "ushort kdiv(ushort a, ushort b) { "
-            "  return %s(%s(a) / %s(b)); "
-            "}\n",
-            from_f32, to_f32, to_f32);
-        p += len;
+                        if (func_id >= 0 && func_id < 10 && !(*injected_mask & (1 << func_id))) {
+                            int inj_len = inject_k_function_impl(p, func_name, dtype, is_native);
+                            if (inj_len > 0) {
+                                p += inj_len;
+                                *injected_mask |= (1 << func_id);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            s++;
+        }
     }
 
-    /* 检测并注入比较函数 */
-    if (strstr(code, "klt")) {
-        int len = snprintf(p, end - p,
-            "bool klt(ushort a, ushort b) { "
-            "  return %s(a) < %s(b); "
-            "}\n",
-            to_f32, to_f32);
-        p += len;
-    }
-    if (strstr(code, "kle")) {
-        int len = snprintf(p, end - p,
-            "bool kle(ushort a, ushort b) { "
-            "  return %s(a) <= %s(b); "
-            "}\n",
-            to_f32, to_f32);
-        p += len;
-    }
-    if (strstr(code, "kgt")) {
-        int len = snprintf(p, end - p,
-            "bool kgt(ushort a, ushort b) { "
-            "  return %s(a) > %s(b); "
-            "}\n",
-            to_f32, to_f32);
-        p += len;
-    }
-    if (strstr(code, "kge")) {
-        int len = snprintf(p, end - p,
-            "bool kge(ushort a, ushort b) { "
-            "  return %s(a) >= %s(b); "
-            "}\n",
-            to_f32, to_f32);
-        p += len;
-    }
-
-    /* 将注入的函数插入到输出代码中 */
-    if (inject_buf[0] != '\0') {
+    if (p > inject_buf) {
         char* temp = (char*)malloc(strlen(out) + strlen(inject_buf) + 10);
         if (temp) {
             strcpy(temp, inject_buf);
@@ -217,105 +299,15 @@ static void inject_used_k_functions(char* out, size_t out_size, const char* code
 }
 
 /* ============================================================================
- * 内核函数宏（只定义宏，具体函数动态注入）
- * ============================================================================ */
-
-const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
-    static char macros_buf[4096];
-    
-    if (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16) {
-        snprintf(macros_buf, sizeof(macros_buf),
-            "/* FP16 模拟 - kxxx 函数动态注入 */\n"
-            "#define K_ZERO (ushort)0u\n"
-            "#define K_ONE (ushort)0x3C00u\n"
-            "#define K_NEG_ONE (ushort)0xBC00u\n");
-    } else if (dtype == ACE_DTYPE_BFLOAT16) {
-        snprintf(macros_buf, sizeof(macros_buf),
-            "/* BF16 模拟 - kxxx 函数动态注入 */\n"
-            "#define K_ZERO (ushort)0u\n"
-            "#define K_ONE (ushort)0x3F80u\n"
-            "#define K_NEG_ONE (ushort)0xBF80u\n");
-    } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
-        snprintf(macros_buf, sizeof(macros_buf),
-            "/* INT8/UINT8 内核函数宏 */\n"
-            "#define kadd(a, b) (((a) + (b)) & 0xFFu)\n"
-            "#define ksub(a, b) (((a) - (b)) & 0xFFu)\n"
-            "#define kmul(a, b) (((a) * (b)) & 0xFFu)\n"
-            "#define kdiv(a, b) (((a) / (b)) & 0xFFu)\n"
-            "#define klt(a, b) ((a) < (b))\n"
-            "#define kle(a, b) ((a) <= (b))\n"
-            "#define kgt(a, b) ((a) > (b))\n"
-            "#define kge(a, b) ((a) >= (b))\n"
-            "#define keq(a, b) ((a) == (b))\n"
-            "#define kne(a, b) ((a) != (b))\n"
-            "#define K_ZERO (uchar)0u\n"
-            "#define K_ONE (uchar)1u\n"
-            "#define K_NEG_ONE (uchar)255u\n");
-    } else if (dtype == ACE_DTYPE_INT16) {
-        snprintf(macros_buf, sizeof(macros_buf),
-            "/* INT16 内核函数宏 */\n"
-            "#define kadd(a, b) (((a) + (b)) & 0xFFFFu)\n"
-            "#define ksub(a, b) (((a) - (b)) & 0xFFFFu)\n"
-            "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n"
-            "#define kdiv(a, b) (((a) / (b)) & 0xFFFFu)\n"
-            "#define klt(a, b) ((a) < (b))\n"
-            "#define kle(a, b) ((a) <= (b))\n"
-            "#define kgt(a, b) ((a) > (b))\n"
-            "#define kge(a, b) ((a) >= (b))\n"
-            "#define keq(a, b) ((a) == (b))\n"
-            "#define kne(a, b) ((a) != (b))\n"
-            "#define K_ZERO (ushort)0u\n"
-            "#define K_ONE (ushort)1u\n"
-            "#define K_NEG_ONE (ushort)65535u\n");
-    } else if (dtype == ACE_DTYPE_FLOAT16 && g_device_exts.has_fp16) {
-        snprintf(macros_buf, sizeof(macros_buf),
-            "/* FP16 原生模式 */\n"
-            "#define kadd(a, b) ((a) + (b))\n"
-            "#define ksub(a, b) ((a) - (b))\n"
-            "#define kmul(a, b) ((a) * (b))\n"
-            "#define kdiv(a, b) ((a) / (b))\n"
-            "#define klt(a, b) ((a) < (b))\n"
-            "#define kle(a, b) ((a) <= (b))\n"
-            "#define kgt(a, b) ((a) > (b))\n"
-            "#define kge(a, b) ((a) >= (b))\n"
-            "#define keq(a, b) ((a) == (b))\n"
-            "#define kne(a, b) ((a) != (b))\n"
-            "#define K_ZERO half(0)\n"
-            "#define K_ONE half(1)\n"
-            "#define K_NEG_ONE half(-1)\n");
-    } else {
-        const char* type_name = ocl_get_type_name(dtype);
-        snprintf(macros_buf, sizeof(macros_buf),
-            "/* 原生类型内核函数宏 */\n"
-            "#define kadd(a, b) ((a) + (b))\n"
-            "#define ksub(a, b) ((a) - (b))\n"
-            "#define kmul(a, b) ((a) * (b))\n"
-            "#define kdiv(a, b) ((a) / (b))\n"
-            "#define klt(a, b) ((a) < (b))\n"
-            "#define kle(a, b) ((a) <= (b))\n"
-            "#define kgt(a, b) ((a) > (b))\n"
-            "#define kge(a, b) ((a) >= (b))\n"
-            "#define keq(a, b) ((a) == (b))\n"
-            "#define kne(a, b) ((a) != (b))\n"
-            "#define K_ZERO (%s)0\n"
-            "#define K_ONE (%s)1\n"
-            "#define K_NEG_ONE (%s)-1\n",
-            type_name, type_name, type_name);
-    }
-    return macros_buf;
-}
-
-/* ============================================================================
  * 代码翻译主函数
  * ============================================================================ */
 
 char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
     const char* type_name = ocl_get_type_name(dtype);
     const char* extension = ocl_get_extension(dtype);
-    const char* converters = get_type_converters(dtype);
-    const char* kernel_macros = ocl_get_kernel_macros(dtype);
+    const char* type_macros = ocl_get_type_macros(dtype);
 
-    /* 替换 T 为实际类型 */
+    /* 步骤 1: 替换 T 为实际类型 */
     char* code = strdup(src);
     if (!code) return NULL;
 
@@ -367,7 +359,7 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
                 
                 while (param_start < end && *param_start != ',' && *param_start != ')') {
                     if (*param_start == '*') {
-                        memcpy(dst, " __global ", 10);  /* 前后都有空格 */
+                        memcpy(dst, " __global ", 10);
                         dst += 10;
                     }
                     *dst++ = *param_start++;
@@ -403,27 +395,28 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
 
     size_t body_len = body_end - body_start - 1;
 
-    /* 动态检测内核代码中使用的 kxxx 函数 */
-    int need_converters = 0;
-    int is_sim = (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16) || 
-                 (dtype == ACE_DTYPE_BFLOAT16);
-    if (is_sim) {
-        if (strstr(code, "kadd") || strstr(code, "ksub") || strstr(code, "kmul") ||
-            strstr(code, "kdiv") || strstr(code, "klt") || strstr(code, "kle") ||
-            strstr(code, "kgt") || strstr(code, "kge") || strstr(code, "keq") ||
-            strstr(code, "kne")) {
-            need_converters = 1;
+    /* 步骤 2: 扫描代码，查找有没有 kxxx 函数调用 */
+    int has_k_functions = 0;
+    const char* s = code;
+    while (*s) {
+        if (s[0] == 'k' && islower(s[1]) && islower(s[2])) {
+            const char* start = s;
+            while (islower(*s)) s++;
+            if (*s == '(' && (s - start) <= 5) {
+                has_k_functions = 1;
+                break;
+            }
+        } else {
+            s++;
         }
     }
 
-    size_t conv_len = need_converters ? strlen(converters) : 0;
-    size_t macros_len = strlen(kernel_macros);
+    /* 步骤 3: 构建基础代码框架 */
     size_t total_len = strlen(name) + params_len + body_len + 2048 +
-                       strlen(extension) + conv_len + macros_len;
+                       strlen(extension) + strlen(type_macros);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
-        "%s"
         "%s"
         "%s"
         "\n__kernel void %s%s\n"
@@ -434,15 +427,16 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
         "    %.*s\n"
         "}\n",
         extension,
-        need_converters ? converters : "",
-        kernel_macros,
+        type_macros,
         name, params,
         (int)body_len, body_start + 1
     );
 
-    /* 动态注入实际使用到的 kxxx 函数 */
-    if (need_converters) {
-        inject_used_k_functions(out, total_len, code, dtype);
+    /* 步骤 4-6: 遍历所有 kxxx，注入对应的实现 */
+    if (has_k_functions) {
+        int injected_mask = 0;
+        int type_def_injected = 0;
+        scan_and_inject(out, code, dtype, &injected_mask, &type_def_injected);
     }
 
     free(params);
