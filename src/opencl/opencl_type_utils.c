@@ -10,15 +10,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* 获取 OpenCL 类型名称 */
+/* 获取 OpenCL 类型名称 - 根据设备能力选择原生或模拟 */
 const char* ocl_get_type_name(ace_dtype_t dtype) {
+    extern ocl_device_extensions_t g_device_exts;
+    
     switch (dtype) {
         case ACE_DTYPE_FLOAT32:  return "float";
         case ACE_DTYPE_FLOAT64:  return "double";
         case ACE_DTYPE_INT32:    return "int";
         case ACE_DTYPE_INT64:    return "long";
-        case ACE_DTYPE_FLOAT16:  return "half";
-        case ACE_DTYPE_BFLOAT16: return "ushort";
+        case ACE_DTYPE_FLOAT16:
+            /* 设备支持 FP16 扩展时使用原生 half，否则使用 uint 模拟 */
+            return g_device_exts.has_fp16 ? "half" : "uint";
+        case ACE_DTYPE_BFLOAT16:
+            /* BF16 总是使用 uint 模拟（OpenCL 无原生支持） */
+            return "uint";
         case ACE_DTYPE_INT8:     return "char";
         case ACE_DTYPE_UINT8:    return "uchar";
         case ACE_DTYPE_INT16:    return "short";
@@ -58,7 +64,7 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
     extern ocl_device_extensions_t g_device_exts;
     
     if (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16) {
-        /* FP16 模拟模式 */
+        /* FP16 模拟模式 - 设备不支持 cl_khr_fp16 */
         snprintf(macros_buf, sizeof(macros_buf),
             "/* FP16 模拟内核函数宏 */\n"
             "float f16_to_f32(uint x) {\n"
@@ -86,7 +92,7 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "#define K_ZERO 0u\n"
             "#define K_ONE 0x3C00u\n");
     } else if (dtype == ACE_DTYPE_BFLOAT16) {
-        /* BF16 模拟模式 */
+        /* BF16 模拟模式 - OpenCL 无原生支持 */
         snprintf(macros_buf, sizeof(macros_buf),
             "/* BF16 模拟内核函数宏 */\n"
             "float bf16_to_f32(uint x) {\n"
@@ -112,7 +118,7 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "#define kadd(a, b) bf16_add(a, b)\n"
             "#define kmul(a, b) bf16_mul(a, b)\n"
             "#define K_ZERO 0u\n"
-            "#define K_ONE 0x3F80u\n");
+            "#define K_ONE 0x3F800000u\n");
     } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
         snprintf(macros_buf, sizeof(macros_buf),
             "/* INT8/UINT8 内核函数宏 */\n"
@@ -127,6 +133,17 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n"
             "#define K_ZERO 0u\n"
             "#define K_ONE 1u\n");
+    } else if (dtype == ACE_DTYPE_FLOAT16 && g_device_exts.has_fp16) {
+        /* FP16 原生模式 - 设备支持 cl_khr_fp16 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* FP16 原生内核函数宏 */\n"
+            "#define kadd(a, b) ((a) + (b))\n"
+            "#define ksub(a, b) ((a) - (b))\n"
+            "#define kmul(a, b) ((a) * (b))\n"
+            "#define kdiv(a, b) ((a) / (b))\n"
+            "#define K_ZERO half(0)\n"
+            "#define K_ONE half(1)\n"
+            "#define K_NEG_ONE half(-1)\n");
     } else {
         /* 原生类型 */
         snprintf(macros_buf, sizeof(macros_buf),
@@ -149,35 +166,6 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             ocl_get_type_name(dtype));
     }
     return macros_buf;
-}
-
-/* BF16 辅助函数代码 */
-static const char* get_bf16_helpers(void) {
-    static char bf16_buf[1024];
-    snprintf(bf16_buf, sizeof(bf16_buf),
-        "/* BF16 转换函数 */\n"
-        "float bf16_to_f32(ushort x) {\n"
-        "    uint sign = (x >> 15) & 0x1;\n"
-        "    uint exp = (x >> 7) & 0xFF;\n"
-        "    uint man = x & 0x7F;\n"
-        "    if (exp == 0) return sign != 0 ? -0.0f : 0.0f;\n"
-        "    if (exp == 255) return sign != 0 ? -INFINITY : INFINITY;\n"
-        "    uint result = (sign << 31) | ((exp + 112) << 23) | (man << 16);\n"
-        "    return as_float(result);\n"
-        "}\n"
-        "ushort f32_to_bf16(float x) {\n"
-        "    uint u = as_uint(x);\n"
-        "    ushort sign = (ushort)((u >> 16) & 0x8000);\n"
-        "    ushort exp = (ushort)(((u >> 23) & 0xFF) - 112);\n"
-        "    ushort man = (ushort)((u >> 16) & 0x7F);\n"
-        "    if ((u & 0x7FFFFFFF) == 0) return sign;\n"
-        "    if (exp < 0) return sign;\n"
-        "    if (exp > 254) return sign | 0x7F80;\n"
-        "    return sign | (exp << 7) | man;\n"
-        "}\n"
-        "ushort bf16_add(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
-        "ushort bf16_mul(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n");
-    return bf16_buf;
 }
 
 char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
@@ -302,14 +290,12 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
 
     size_t body_len = body_end - body_start - 1;
 
-    const char* bf16_helpers = (dtype == ACE_DTYPE_BFLOAT16) ? get_bf16_helpers() : "";
-
+    /* kernel_macros 已经包含了所有需要的函数定义和宏 */
     size_t total_len = strlen(name) + params_len + body_len + 1024 +
-                       strlen(extension) + strlen(bf16_helpers) + strlen(kernel_macros);
+                       strlen(extension) + strlen(kernel_macros);
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
-        "%s"
         "%s"
         "%s"
         "__kernel void %s%s\n"
@@ -321,7 +307,6 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
         "}\n",
         extension,
         kernel_macros,
-        bf16_helpers,
         name, params,
         (int)body_len, body_start + 1
     );
