@@ -319,7 +319,9 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "uint bf16_add(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
                 "uint bf16_mul(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
                 "#define kadd(a, b) bf16_add(a, b)\n"
-                "#define kmul(a, b) bf16_mul(a, b)\n");
+                "#define kmul(a, b) bf16_mul(a, b)\n"
+                "#define K_ZERO 0u\n"
+                "#define K_ONE 0x3F800000u\n");
         } else if (dtype == ACE_DTYPE_FLOAT16) {
             snprintf(type_defs_buf, sizeof(type_defs_buf),
                 "/* FP16 模拟 */\n"
@@ -344,23 +346,44 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "uint f16_add(uint a, uint b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
                 "uint f16_mul(uint a, uint b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
                 "#define kadd(a, b) f16_add(a, b)\n"
-                "#define kmul(a, b) f16_mul(a, b)\n");
+                "#define kmul(a, b) f16_mul(a, b)\n"
+                "#define K_ZERO 0u\n"
+                "#define K_ONE 0x3C00u\n");
         } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
             snprintf(type_defs_buf, sizeof(type_defs_buf),
                 "/* INT8/UINT8 模拟 */\n"
                 "#define kadd(a, b) (((a) + (b)) & 0xFFu)\n"
-                "#define kmul(a, b) (((a) * (b)) & 0xFFu)\n");
+                "#define kmul(a, b) (((a) * (b)) & 0xFFu)\n"
+                "#define K_ZERO 0u\n"
+                "#define K_ONE 1u\n");
         } else if (dtype == ACE_DTYPE_INT16) {
             snprintf(type_defs_buf, sizeof(type_defs_buf),
                 "/* INT16 模拟 */\n"
                 "#define kadd(a, b) (((a) + (b)) & 0xFFFFu)\n"
-                "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n");
+                "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n"
+                "#define K_ZERO 0u\n"
+                "#define K_ONE 1u\n");
         }
     } else {
         /* 原生模式 - kadd/kmul 直接展开为运算符 */
         snprintf(type_defs_buf, sizeof(type_defs_buf),
+            "/* 原生类型内核函数宏 */\n"
             "#define kadd(a, b) ((a) + (b))\n"
-            "#define kmul(a, b) ((a) * (b))\n");
+            "#define ksub(a, b) ((a) - (b))\n"
+            "#define kmul(a, b) ((a) * (b))\n"
+            "#define kdiv(a, b) ((a) / (b))\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (%s)0\n"
+            "#define K_ONE (%s)1\n"
+            "#define K_NEG_ONE (%s)-1\n",
+            vk_get_compute_type_name(dtype),
+            vk_get_compute_type_name(dtype),
+            vk_get_compute_type_name(dtype));
     }
     type_defs = type_defs_buf;
 

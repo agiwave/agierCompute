@@ -45,13 +45,59 @@ const char* cuda_get_type_macros(ace_dtype_t dtype) {
     return "";
 }
 
-/* 获取 kadd/kmul 宏定义 */
+/* 获取 kadd/kmul 等内核函数宏和常量定义 */
 const char* cuda_get_kernel_macros(ace_dtype_t dtype) {
-    static char macros_buf[256];
-    /* CUDA 原生支持所有类型的运算符，直接展开 */
-    snprintf(macros_buf, sizeof(macros_buf),
-        "#define kadd(a, b) ((a) + (b))\n"
-        "#define kmul(a, b) ((a) * (b))\n");
+    static char macros_buf[1024];
+    
+    if (dtype == ACE_DTYPE_FLOAT16) {
+        /* FP16 需要使用辅助函数，避免隐式转换歧义 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* FP16 内核函数宏 */\n"
+            "#define kadd(a, b) f16_add(a, b)\n"
+            "#define ksub(a, b) f16_sub(a, b)\n"
+            "#define kmul(a, b) f16_mul(a, b)\n"
+            "#define kdiv(a, b) f16_div(a, b)\n"
+            "#define klt(a, b) f16_lt(a, b)\n"
+            "#define kle(a, b) f16_le(a, b)\n"
+            "#define kgt(a, b) f16_gt(a, b)\n"
+            "#define kge(a, b) f16_ge(a, b)\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO __float2half(0.0f)\n"
+            "#define K_ONE __float2half(1.0f)\n"
+            "#define K_NEG_ONE __float2half(-1.0f)\n");
+    } else if (dtype == ACE_DTYPE_BFLOAT16) {
+        /* BF16 需要使用辅助函数 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* BF16 内核函数宏 */\n"
+            "#define kadd(a, b) bf16_add(a, b)\n"
+            "#define ksub(a, b) bf16_sub(a, b)\n"
+            "#define kmul(a, b) bf16_mul(a, b)\n"
+            "#define kdiv(a, b) bf16_div(a, b)\n"
+            "#define K_ZERO __float2bfloat16(0.0f)\n"
+            "#define K_ONE __float2bfloat16(1.0f)\n"
+            "#define K_NEG_ONE __float2bfloat16(-1.0f)\n");
+    } else {
+        /* 其他类型直接展开为运算符 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* 原生类型内核函数宏 */\n"
+            "#define kadd(a, b) ((a) + (b))\n"
+            "#define ksub(a, b) ((a) - (b))\n"
+            "#define kmul(a, b) ((a) * (b))\n"
+            "#define kdiv(a, b) ((a) / (b))\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (%s)0\n"
+            "#define K_ONE (%s)1\n"
+            "#define K_NEG_ONE (%s)-1\n",
+            cuda_get_type_name(dtype),
+            cuda_get_type_name(dtype),
+            cuda_get_type_name(dtype));
+    }
     return macros_buf;
 }
 

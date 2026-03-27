@@ -52,13 +52,102 @@ const char* ocl_get_extension(ace_dtype_t dtype) {
     }
 }
 
-/* 获取 kadd/kmul 宏定义 */
+/* 获取 kadd/kmul 等内核函数宏和常量定义 */
 const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
-    static char macros_buf[256];
-    /* OpenCL 原生支持所有类型的运算符，直接展开 */
-    snprintf(macros_buf, sizeof(macros_buf),
-        "#define kadd(a, b) ((a) + (b))\n"
-        "#define kmul(a, b) ((a) * (b))\n");
+    static char macros_buf[1024];
+    extern ocl_device_extensions_t g_device_exts;
+    
+    if (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16) {
+        /* FP16 模拟模式 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* FP16 模拟内核函数宏 */\n"
+            "float f16_to_f32(uint x) {\n"
+            "    uint sign = (x >> 15u) & 0x1u;\n"
+            "    uint exp = (x >> 10u) & 0x1Fu;\n"
+            "    uint man = x & 0x3FFu;\n"
+            "    if (exp == 0u) return sign != 0u ? -0.0f : 0.0f;\n"
+            "    if (exp == 31u) return sign != 0u ? -1.0f/0.0f : 1.0f/0.0f;\n"
+            "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 13u);\n"
+            "    return as_float(result);\n"
+            "}\n"
+            "uint f32_to_f16(float x) {\n"
+            "    uint u = as_uint(x);\n"
+            "    uint sign = (u >> 16u) & 0x8000u;\n"
+            "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
+            "    uint man = (u >> 13u) & 0x3FFu;\n"
+            "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
+            "    if (exp > 30u) return sign | 0x7C00u;\n"
+            "    return sign | (exp << 10u) | man;\n"
+            "}\n"
+            "uint f16_add(uint a, uint b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
+            "uint f16_mul(uint a, uint b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
+            "#define kadd(a, b) f16_add(a, b)\n"
+            "#define kmul(a, b) f16_mul(a, b)\n"
+            "#define K_ZERO 0u\n"
+            "#define K_ONE 0x3C00u\n");
+    } else if (dtype == ACE_DTYPE_BFLOAT16) {
+        /* BF16 模拟模式 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* BF16 模拟内核函数宏 */\n"
+            "float bf16_to_f32(uint x) {\n"
+            "    uint sign = (x >> 15u) & 0x1u;\n"
+            "    uint exp = (x >> 7u) & 0xFFu;\n"
+            "    uint man = x & 0x7Fu;\n"
+            "    if (exp == 0u) return sign != 0u ? -0.0f : 0.0f;\n"
+            "    if (exp == 255u) return sign != 0u ? -1.0f/0.0f : 1.0f/0.0f;\n"
+            "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 16u);\n"
+            "    return as_float(result);\n"
+            "}\n"
+            "uint f32_to_bf16(float x) {\n"
+            "    uint u = as_uint(x);\n"
+            "    uint sign = (u >> 16u) & 0x8000u;\n"
+            "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
+            "    uint man = (u >> 16u) & 0x7Fu;\n"
+            "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
+            "    if (exp > 254u) return sign | 0x7F80u;\n"
+            "    return sign | (exp << 7u) | man;\n"
+            "}\n"
+            "uint bf16_add(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
+            "uint bf16_mul(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
+            "#define kadd(a, b) bf16_add(a, b)\n"
+            "#define kmul(a, b) bf16_mul(a, b)\n"
+            "#define K_ZERO 0u\n"
+            "#define K_ONE 0x3F80u\n");
+    } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* INT8/UINT8 内核函数宏 */\n"
+            "#define kadd(a, b) (((a) + (b)) & 0xFFu)\n"
+            "#define kmul(a, b) (((a) * (b)) & 0xFFu)\n"
+            "#define K_ZERO 0u\n"
+            "#define K_ONE 1u\n");
+    } else if (dtype == ACE_DTYPE_INT16) {
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* INT16 内核函数宏 */\n"
+            "#define kadd(a, b) (((a) + (b)) & 0xFFFFu)\n"
+            "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n"
+            "#define K_ZERO 0u\n"
+            "#define K_ONE 1u\n");
+    } else {
+        /* 原生类型 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* 原生类型内核函数宏 */\n"
+            "#define kadd(a, b) ((a) + (b))\n"
+            "#define ksub(a, b) ((a) - (b))\n"
+            "#define kmul(a, b) ((a) * (b))\n"
+            "#define kdiv(a, b) ((a) / (b))\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (%s)0\n"
+            "#define K_ONE (%s)1\n"
+            "#define K_NEG_ONE (%s)-1\n",
+            ocl_get_type_name(dtype),
+            ocl_get_type_name(dtype),
+            ocl_get_type_name(dtype));
+    }
     return macros_buf;
 }
 
