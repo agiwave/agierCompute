@@ -17,6 +17,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <cuda.h>
+#include <cuda_runtime_api.h>
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 #include "ace.h"
@@ -36,21 +37,20 @@
  */
 static int cuda_supports_native_kfunc(ace_dtype_t dtype) {
     /* 获取当前 CUDA 设备属性 */
-    int device = 0;
-    cudaError_t err = cudaGetDevice(&device);
-    if (err != cudaSuccess) {
+    CUdevice device;
+    CUresult result = cuDeviceGet(&device, 0);
+    if (result != CUDA_SUCCESS) {
         /* 如果无法获取设备信息，保守假设不支持 */
         return (dtype != ACE_DTYPE_FLOAT16 && dtype != ACE_DTYPE_BFLOAT16);
     }
     
-    cudaDeviceProp prop;
-    err = cudaGetDeviceProperties(&prop, device);
-    if (err != cudaSuccess) {
-        return (dtype != ACE_DTYPE_FLOAT16 && dtype != ACE_DTYPE_BFLOAT16);
-    }
+    int compute_major = 0;
+    int compute_minor = 0;
     
-    int compute_major = prop.major;
-    int compute_minor = prop.minor;
+    /* 获取计算能力 */
+    cuDeviceGetAttribute(&compute_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+    cuDeviceGetAttribute(&compute_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+    
     int compute_capability = compute_major * 10 + compute_minor;
     
     switch (dtype) {

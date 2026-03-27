@@ -19,15 +19,28 @@ ocl_device_extensions_t g_device_exts = {0};
 static void check_device_extensions(cl_device_id device) {
     char extensions[2048] = "";
     clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
-    
+
+    /* FP16/BF16/FP64 支持检测 */
     g_device_exts.has_fp16 = (strstr(extensions, "cl_khr_fp16") != NULL);
     g_device_exts.has_fp64 = (strstr(extensions, "cl_khr_fp64") != NULL);
-    g_device_exts.has_int64 = 1;  /* OpenCL 1.0+ 都支持 int64 */
     
-    printf("[OpenCL] Device extensions: FP16=%s, FP64=%s, INT64=%s\n",
+    /* INT64: OpenCL 1.0+ 都支持 */
+    g_device_exts.has_int64 = 1;
+    
+    /* INT8/INT16: 通过扩展检测 */
+    g_device_exts.has_int8 = (strstr(extensions, "cl_khr_int8") != NULL);
+    g_device_exts.has_int16 = (strstr(extensions, "cl_khr_int16") != NULL);
+    
+    /* 8/16 位存储支持 */
+    g_device_exts.has_8bit_storage = (strstr(extensions, "cl_khr_8bit_storage") != NULL);
+    g_device_exts.has_16bit_storage = (strstr(extensions, "cl_khr_16bit_storage") != NULL);
+
+    printf("[OpenCL] Device extensions: FP16=%s, FP64=%s, INT64=%s, INT8=%s, INT16=%s\n",
            g_device_exts.has_fp16 ? "YES" : "NO",
            g_device_exts.has_fp64 ? "YES" : "NO",
-           g_device_exts.has_int64 ? "YES" : "NO");
+           g_device_exts.has_int64 ? "YES" : "NO",
+           g_device_exts.has_int8 ? "YES" : "NO",
+           g_device_exts.has_int16 ? "YES" : "NO");
 }
 
 ace_error_t ocl_init(ace_backend_info_t* info) {

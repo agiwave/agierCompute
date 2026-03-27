@@ -18,35 +18,51 @@
 #include <ctype.h>
 #include <CL/cl.h>
 #include "ace.h"
-
-/* 设备扩展信息（由 opencl_device.c 提供） */
-typedef struct {
-    int has_fp16;
-    int has_fp64;
-    int has_int64;
-} ocl_device_extensions_t;
-extern ocl_device_extensions_t g_device_exts;
+#include "opencl_backend.h"
 
 /* ============================================================================
  * 设备能力查询
  * ============================================================================ */
 
+/**
+ * @brief 查询 OpenCL 设备是否原生支持指定类型的 kxxx 运算
+ * 
+ * OpenCL 设备对 FP16/INT8/INT16 的支持取决于扩展:
+ * - FP16 (half): cl_khr_fp16 扩展
+ * - FP64 (double): cl_khr_fp64 扩展
+ * - INT8: cl_khr_int8 扩展 + cl_khr_8bit_storage
+ * - INT16: cl_khr_int16 扩展 + cl_khr_16bit_storage
+ * - BF16: 总是需要模拟 (无原生支持)
+ */
 static int ocl_supports_native_kfunc(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT32:
         case ACE_DTYPE_INT32:
-        case ACE_DTYPE_INT8:
-        case ACE_DTYPE_UINT8:
-        case ACE_DTYPE_INT16:
-            return 1;  /* 原生支持 */
+            return 1;  /* 基础类型总是支持 */
+            
         case ACE_DTYPE_FLOAT64:
             return g_device_exts.has_fp64;
-        case ACE_DTYPE_FLOAT16:
-            return g_device_exts.has_fp16;
-        case ACE_DTYPE_BFLOAT16:
-            return 0;  /* BF16 总是需要模拟 */
+            
         case ACE_DTYPE_INT64:
             return g_device_exts.has_int64;
+            
+        case ACE_DTYPE_FLOAT16:
+            /* FP16 需要 cl_khr_fp16 扩展 */
+            return g_device_exts.has_fp16;
+            
+        case ACE_DTYPE_BFLOAT16:
+            /* BF16 总是需要模拟 (OpenCL 无原生支持) */
+            return 0;
+            
+        case ACE_DTYPE_INT8:
+        case ACE_DTYPE_UINT8:
+            /* INT8 需要 cl_khr_int8 + cl_khr_8bit_storage 扩展 */
+            return g_device_exts.has_int8 && g_device_exts.has_8bit_storage;
+            
+        case ACE_DTYPE_INT16:
+            /* INT16 需要 cl_khr_int16 + cl_khr_16bit_storage 扩展 */
+            return g_device_exts.has_int16 && g_device_exts.has_16bit_storage;
+            
         default:
             return 1;
     }
@@ -221,29 +237,18 @@ static int inject_k_function_impl(char* buf, const char* func_name, ace_dtype_t 
  * 扫描代码并注入所有找到的 kxxx 函数
  * ============================================================================ */
 
-static void scan_and_inject(char* out, const char* code, ace_dtype_t dtype,
-                            int* injected_mask, int* type_def_injected) {
+/**
+ * @brief 扫描代码并注入所有找到的 kxxx 函数
+ * @param out 输出缓冲区指针的指针（函数会修改它）
+ * @param code 原始内核代码
+ * @param dtype 数据类型
+ * @param injected_mask 已注入函数掩码（输入/输出）
+ */
+static void scan_and_inject(char** out, const char* code, ace_dtype_t dtype, int* injected_mask) {
     int is_native = ocl_supports_native_kfunc(dtype);
-    
-    /* 非原生支持：先注入类型定义（如果还未注入） */
-    if (!is_native && !*type_def_injected) {
-        const char* type_def = get_type_definition(dtype);
-        if (type_def && type_def[0]) {
-            char* temp = (char*)malloc(strlen(out) + strlen(type_def) + 10);
-            if (temp) {
-                strcpy(temp, type_def);
-                strcat(temp, "\n");
-                strcat(temp, out);
-                strcpy(out, temp);
-                free(temp);
-                *type_def_injected = 1;
-            }
-        }
-    }
-    
+
     char inject_buf[8192] = "";
     char* p = inject_buf;
-    char* end = inject_buf + sizeof(inject_buf) - 1;
 
     const char* s = code;
     while (*s) {
@@ -286,14 +291,34 @@ static void scan_and_inject(char* out, const char* code, ace_dtype_t dtype,
         }
     }
 
+    /* 将注入的函数插入到输出代码中 - 在类型定义之后，内核函数之前 */
     if (p > inject_buf) {
-        char* temp = (char*)malloc(strlen(out) + strlen(inject_buf) + 10);
+        /* 查找类型定义结束的位置 */
+        char* insert_pos = NULL;
+        if (!is_native) {
+            /* 非原生支持：在类型定义之后注入 */
+            const char* marker = "*/\n";
+            char* marker_pos = strstr(*out, marker);
+            if (marker_pos) {
+                insert_pos = marker_pos + strlen(marker);
+            }
+        }
+        
+        /* 如果找不到类型定义，就在开头注入 */
+        if (!insert_pos) insert_pos = *out;
+        
+        /* 在 insert_pos 位置注入 kxxx 函数 */
+        size_t prefix_len = insert_pos - *out;
+        size_t new_len = strlen(*out) + strlen(inject_buf) + 10;
+        char* temp = (char*)malloc(new_len);
         if (temp) {
-            strcpy(temp, inject_buf);
+            strncpy(temp, *out, prefix_len);
+            temp[prefix_len] = '\0';
+            strcat(temp, inject_buf);
             strcat(temp, "\n");
-            strcat(temp, out);
-            strcpy(out, temp);
-            free(temp);
+            strcat(temp, insert_pos);
+            free(*out);
+            *out = temp;
         }
     }
 }
@@ -435,8 +460,35 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
     /* 步骤 4-6: 遍历所有 kxxx，注入对应的实现 */
     if (has_k_functions) {
         int injected_mask = 0;
-        int type_def_injected = 0;
-        scan_and_inject(out, code, dtype, &injected_mask, &type_def_injected);
+        int is_native = ocl_supports_native_kfunc(dtype);
+        
+        /* 非原生支持：先注入类型定义 */
+        if (!is_native) {
+            const char* type_def = get_type_definition(dtype);
+            if (type_def && type_def[0]) {
+                /* 找到 extension 结束的位置 */
+                char* insert_pos = strstr(out, extension);
+                if (insert_pos) {
+                    insert_pos += strlen(extension);
+                    /* 在 insert_pos 位置插入类型定义 */
+                    size_t prefix_len = insert_pos - out;
+                    size_t new_len = strlen(out) + strlen(type_def) + 10;
+                    char* temp = (char*)malloc(new_len);
+                    if (temp) {
+                        strncpy(temp, out, prefix_len);
+                        temp[prefix_len] = '\0';
+                        strcat(temp, type_def);
+                        strcat(temp, "\n");
+                        strcat(temp, insert_pos);
+                        free(out);
+                        out = temp;
+                    }
+                }
+            }
+        }
+
+        /* 扫描并注入所有找到的 kxxx 函数（在类型定义之后） */
+        scan_and_inject(&out, code, dtype, &injected_mask);
     }
 
     free(params);

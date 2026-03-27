@@ -8,6 +8,7 @@ if(Vulkan_FOUND)
     add_library(ace_be_vulkan SHARED
         vulkan_backend.c
         vulkan_device.c
+        vulkan_device_features.c
         vulkan_memory.c
         vulkan_kernel.c
         vulkan_type_utils.c
