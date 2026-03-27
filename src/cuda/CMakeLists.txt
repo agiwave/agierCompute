@@ -14,6 +14,8 @@ if(CMAKE_CUDA_COMPILER)
         cuda_memory.c
         cuda_kernel.c
         cuda_type_utils.c
+        cuda_dtype_table.c
+        cuda_kernel_ops_table.c
     )
 
     target_include_directories(ace_be_cuda

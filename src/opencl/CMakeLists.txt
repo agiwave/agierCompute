@@ -14,6 +14,8 @@ if(OpenCL_FOUND)
         opencl_memory.c
         opencl_kernel.c
         opencl_type_utils.c
+        opencl_dtype_table.c
+        opencl_kernel_ops_table.c
     )
 
     target_include_directories(ace_be_opencl

@@ -7,6 +7,7 @@
 
 #include "ace.h"
 #include "../ace_backend_api.h"
+#include "cuda_dtype_table.h"
 
 #ifdef CUDA_AVAILABLE
 
@@ -51,7 +52,10 @@ typedef struct {
  * Type utilities (cuda_type_utils.c)
  * ============================================================================ */
 
-const char* cuda_get_type_name(ace_dtype_t dtype);
+const dtype_info_t* cuda_get_dtype_table(void);
+static inline const char* cuda_get_type_name(ace_dtype_t dtype) {
+    return cuda_dtype_info(dtype)->name;
+}
 const char* cuda_get_type_headers(ace_dtype_t dtype);
 const char* cuda_get_type_macros(ace_dtype_t dtype);
 char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype);

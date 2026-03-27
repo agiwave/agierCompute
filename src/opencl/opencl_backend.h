@@ -7,6 +7,7 @@
 
 #include "ace.h"
 #include "../ace_backend_api.h"
+#include "opencl_dtype_table.h"
 
 #ifdef OPENCL_AVAILABLE
 
@@ -67,7 +68,10 @@ extern ocl_device_extensions_t g_device_exts;
  * Type utilities (opencl_type_utils.c)
  * ============================================================================ */
 
-const char* ocl_get_type_name(ace_dtype_t dtype);
+const dtype_info_t* opencl_get_dtype_table(void);
+static inline const char* ocl_get_type_name(ace_dtype_t dtype) {
+    return opencl_dtype_info(dtype)->name;
+}
 const char* ocl_get_extension(ace_dtype_t dtype);
 char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype);
 
