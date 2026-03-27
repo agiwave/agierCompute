@@ -1,179 +1,341 @@
 /**
  * @file vulkan_type_utils.c
- * @brief Vulkan type translation utilities
+ * @brief Vulkan 类型辅助工具和动态 kxxx 函数注入
  */
-#include "vulkan_backend.h"
-
-#ifdef VULKAN_AVAILABLE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
+#include <vulkan/vulkan.h>
+#include "ace.h"
 
-/* 全局设备特性 */
-static vk_device_features_t g_device_features = {0};
+/* ============================================================================
+ * 设备特性检测（由 vulkan_device.c 提供）
+ * ============================================================================ */
 
-void vk_detect_device_features(VkPhysicalDevice physical_device) {
-    /* 检测 Vulkan 1.0 基础特性 */
-    VkPhysicalDeviceFeatures features10 = {0};
-    vkGetPhysicalDeviceFeatures(physical_device, &features10);
-    
-    /* 检测 Vulkan 1.2 特性 */
-    VkPhysicalDeviceVulkan12Features features12 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
-    };
+typedef struct {
+    int has_fp16;
+    int has_int8;
+    int has_int16;
+    int has_16bit_storage;
+    int has_8bit_storage;
+} vk_device_features_t;
+extern vk_device_features_t g_device_features;
 
-    VkPhysicalDeviceFeatures2 features2 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &features12
-    };
-
-    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
-
-    g_device_features.has_float16 = features12.shaderFloat16;
-    g_device_features.has_int8 = features12.shaderInt8;
-    g_device_features.has_int16 = features10.shaderInt16;  /* shaderInt16 在 Vulkan 1.0 特性中 */
-
-    /* 检测 16-bit storage 扩展 */
-    VkPhysicalDevice16BitStorageFeatures storage16 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES
-    };
-    features2.pNext = &storage16;
-    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
-
-    g_device_features.has_16bit_storage = storage16.storageBuffer16BitAccess;
-
-    /* 检测 8-bit storage 扩展 */
-    VkPhysicalDevice8BitStorageFeatures storage8 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES
-    };
-    features2.pNext = &storage8;
-    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
-
-    g_device_features.has_8bit_storage = storage8.storageBuffer8BitAccess;
-
-    /* 检测 bfloat16 扩展 - 使用正确的结构体名称 */
-    VkPhysicalDeviceShaderBfloat16FeaturesKHR bf16_features = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR
-    };
-    features2.pNext = &bf16_features;
-    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
-
-    g_device_features.has_bfloat16 = bf16_features.shaderBFloat16Type;
-
-    printf("[Vulkan] Device features: FP16=%d, INT8=%d, INT16=%d, 16bit_storage=%d, 8bit_storage=%d, BF16=%d\n",
-           g_device_features.has_float16,
-           g_device_features.has_int8,
-           g_device_features.has_int16,
-           g_device_features.has_16bit_storage,
-           g_device_features.has_8bit_storage,
-           g_device_features.has_bfloat16);
-    
-    /* 打印详细支持信息 */
-    printf("[Vulkan] Native type support:\n");
-    printf("  - FLOAT16: %s\n", (g_device_features.has_float16 && g_device_features.has_16bit_storage) ? "YES" : "NO (using emulation)");
-    printf("  - BFLOAT16: %s\n", (g_device_features.has_bfloat16 && g_device_features.has_16bit_storage) ? "YES" : "NO (using emulation)");
-    printf("  - INT8: %s\n", (g_device_features.has_int8 && g_device_features.has_8bit_storage) ? "YES" : "NO (using emulation)");
-    printf("  - INT16: %s\n", (g_device_features.has_int16 && g_device_features.has_16bit_storage) ? "YES" : "NO (using emulation)");
-}
-
-int vk_supports_native_storage(ace_dtype_t dtype) {
+static int vk_supports_native_storage(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT16:
-            return g_device_features.has_float16 && g_device_features.has_16bit_storage;
+            return g_device_features.has_fp16 && g_device_features.has_16bit_storage;
         case ACE_DTYPE_BFLOAT16:
-            return g_device_features.has_bfloat16 && g_device_features.has_16bit_storage;
+            return 0;  /* BF16 总是模拟 */
         case ACE_DTYPE_INT8:
-        case ACE_DTYPE_UINT8:
             return g_device_features.has_int8 && g_device_features.has_8bit_storage;
         case ACE_DTYPE_INT16:
             return g_device_features.has_int16 && g_device_features.has_16bit_storage;
-        case ACE_DTYPE_INT64:
-            return 1;
         default:
             return 1;
     }
 }
 
+/* ============================================================================
+ * 类型名称映射
+ * ============================================================================ */
+
 const char* vk_get_buffer_type_name(ace_dtype_t dtype) {
-    if (vk_supports_native_storage(dtype)) {
-        switch (dtype) {
-            case ACE_DTYPE_FLOAT32:  return "float";
-            case ACE_DTYPE_FLOAT64:  return "double";
-            case ACE_DTYPE_INT32:    return "int";
-            case ACE_DTYPE_INT64:    return "int64_t";
-            case ACE_DTYPE_INT8:     return "int8_t";
-            case ACE_DTYPE_UINT8:    return "uint8_t";
-            case ACE_DTYPE_INT16:    return "int16_t";
-            case ACE_DTYPE_FLOAT16:  return "float16_t";
-            case ACE_DTYPE_BFLOAT16: return "bfloat16_t";
-            default:                 return "float";
-        }
-    } else {
-        switch (dtype) {
-            case ACE_DTYPE_FLOAT16:
-            case ACE_DTYPE_BFLOAT16:
-            case ACE_DTYPE_INT16:
-            case ACE_DTYPE_UINT8:
-            case ACE_DTYPE_INT8:
-                return "uint";
-            case ACE_DTYPE_INT64:
-                return "uint";
-            default:
-                return "float";
-        }
+    switch (dtype) {
+        case ACE_DTYPE_FLOAT32:  return "float";
+        case ACE_DTYPE_FLOAT64:  return "float64_t";
+        case ACE_DTYPE_INT32:    return "int";
+        case ACE_DTYPE_INT64:    return "int64_t";
+        case ACE_DTYPE_FLOAT16:  return "float16_t";
+        case ACE_DTYPE_BFLOAT16: return "uint16_t";
+        case ACE_DTYPE_INT8:     return "int8_t";
+        case ACE_DTYPE_UINT8:    return "uint8_t";
+        case ACE_DTYPE_INT16:    return "int16_t";
+        default:                 return "float";
     }
 }
 
 const char* vk_get_compute_type_name(ace_dtype_t dtype) {
     switch (dtype) {
         case ACE_DTYPE_FLOAT32:  return "float";
-        case ACE_DTYPE_FLOAT64:  return "double";
+        case ACE_DTYPE_FLOAT64:  return "float64_t";
         case ACE_DTYPE_INT32:    return "int";
         case ACE_DTYPE_INT64:    return "int64_t";
+        case ACE_DTYPE_FLOAT16:  return "float16_t";
+        case ACE_DTYPE_BFLOAT16: return "uint16_t";
         case ACE_DTYPE_INT8:     return "int8_t";
         case ACE_DTYPE_UINT8:    return "uint8_t";
         case ACE_DTYPE_INT16:    return "int16_t";
-        case ACE_DTYPE_FLOAT16:  return "float16_t";
-        case ACE_DTYPE_BFLOAT16: return "bfloat16_t";
         default:                 return "float";
     }
 }
 
-int vk_is_float_dtype(ace_dtype_t dtype) {
-    return (dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64 ||
-            dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16);
-}
+/* ============================================================================
+ * GLSL 扩展声明
+ * ============================================================================ */
 
 const char* vk_get_glsl_extension(ace_dtype_t dtype) {
-    /* 检查是否支持原生类型，不支持则返回空字符串（使用 uint 模拟） */
-    if (!vk_supports_native_storage(dtype)) {
-        return "";  /* 使用 uint 模拟，不需要扩展 */
+    int use_native = vk_supports_native_storage(dtype);
+    
+    if (!use_native) {
+        return "#extension GL_EXT_shader_explicit_arithmetic_types : require\n"
+               "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n"
+               "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
     }
     
-    /* 设备支持原生类型，返回相应的扩展声明 */
     switch (dtype) {
-        case ACE_DTYPE_FLOAT64:
-            return "#extension GL_ARB_gpu_shader_fp64 : require\n";
-        case ACE_DTYPE_INT64:
-            return "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
         case ACE_DTYPE_FLOAT16:
-            return "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
-        case ACE_DTYPE_BFLOAT16:
-            return "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
+            return "#extension GL_EXT_shader_16bit_storage : require\n"
+                   "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
         case ACE_DTYPE_INT8:
-        case ACE_DTYPE_UINT8:
-            return "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
+            return "#extension GL_EXT_shader_8bit_storage : require\n"
+                   "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n";
         case ACE_DTYPE_INT16:
-            return "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
+            return "#extension GL_EXT_shader_16bit_storage : require\n"
+                   "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n";
         default:
             return "";
     }
 }
 
-char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype, int* n_buffers, int* n_scalars) {
-    (void)name;  /* 可能未使用 */
+/* ============================================================================
+ * 只包含类型转换函数，运算函数动态生成
+ * ============================================================================ */
+
+static const char* get_type_converters(ace_dtype_t dtype) {
+    static char conv_buf[4096];
+    
+    if (dtype == ACE_DTYPE_FLOAT16) {
+        snprintf(conv_buf, sizeof(conv_buf),
+            "/* FP16 类型转换函数 */\n"
+            "float f16_to_f32(uint16_t x) {\n"
+            "    uint sign = (x >> 15u) & 0x1u;\n"
+            "    uint exp = (x >> 10u) & 0x1Fu;\n"
+            "    uint man = x & 0x3FFu;\n"
+            "    if (exp == 0u) return sign != 0u ? -0.0 : 0.0;\n"
+            "    if (exp == 31u) return sign != 0u ? -1.0/0.0 : 1.0/0.0;\n"
+            "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 13u);\n"
+            "    return uintBitsToFloat(result);\n"
+            "}\n"
+            "uint16_t f32_to_f16(float x) {\n"
+            "    uint u = floatBitsToUint(x);\n"
+            "    uint sign = (u >> 16u) & 0x8000u;\n"
+            "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
+            "    uint man = (u >> 13u) & 0x3FFu;\n"
+            "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
+            "    if (exp > 30u) return uint16_t(sign | 0x7C00u);\n"
+            "    return uint16_t(sign | (exp << 10u) | man);\n"
+            "}\n");
+        return conv_buf;
+    } else if (dtype == ACE_DTYPE_BFLOAT16) {
+        snprintf(conv_buf, sizeof(conv_buf),
+            "/* BF16 类型转换函数 */\n"
+            "float bf16_to_f32(uint16_t x) {\n"
+            "    uint sign = (x >> 15) & 0x1u;\n"
+            "    uint exp = (x >> 7) & 0xFFu;\n"
+            "    uint man = x & 0x7Fu;\n"
+            "    if (exp == 0u) return sign != 0u ? -0.0 : 0.0;\n"
+            "    if (exp == 255u) return sign != 0u ? -1.0/0.0 : 1.0/0.0;\n"
+            "    uint result = (sign << 31u) | (exp << 23u) | (man << 16u);\n"
+            "    return uintBitsToFloat(result);\n"
+            "}\n"
+            "uint16_t f32_to_bf16(float x) {\n"
+            "    uint u = floatBitsToUint(x);\n"
+            "    uint sign = (u >> 16u) & 0x8000u;\n"
+            "    uint exp = (u >> 23u) & 0xFFu;\n"
+            "    uint man = (u >> 16u) & 0x7Fu;\n"
+            "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
+            "    if (exp == 255u) return uint16_t(sign | 0x7F80u);\n"
+            "    return uint16_t(sign | (exp << 7u) | man);\n"
+            "}\n");
+        return conv_buf;
+    }
+    return "";
+}
+
+/* ============================================================================
+ * 动态 kxxx 函数注入
+ * ============================================================================ */
+
+static void inject_used_k_functions(char* out, size_t out_size, const char* code, ace_dtype_t dtype) {
+    if (dtype != ACE_DTYPE_FLOAT16 && dtype != ACE_DTYPE_BFLOAT16) {
+        return;
+    }
+
+    char inject_buf[8192] = "";
+    char* p = inject_buf;
+    char* end = inject_buf + sizeof(inject_buf) - 1;
+
+    const char* type_name = "uint16_t";
+    const char* to_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f16_to_f32" : "bf16_to_f32";
+    const char* from_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f32_to_f16" : "f32_to_bf16";
+
+    /* 检测并注入 kadd */
+    if (strstr(code, "kadd")) {
+        int len = snprintf(p, end - p,
+            "uint16_t kadd(uint16_t a, uint16_t b) { "
+            "  return %s(%s(a) + %s(b)); "
+            "}\n",
+            from_f32, to_f32, to_f32);
+        p += len;
+    }
+
+    /* 检测并注入 ksub */
+    if (strstr(code, "ksub")) {
+        int len = snprintf(p, end - p,
+            "uint16_t ksub(uint16_t a, uint16_t b) { "
+            "  return %s(%s(a) - %s(b)); "
+            "}\n",
+            from_f32, to_f32, to_f32);
+        p += len;
+    }
+
+    /* 检测并注入 kmul */
+    if (strstr(code, "kmul")) {
+        int len = snprintf(p, end - p,
+            "uint16_t kmul(uint16_t a, uint16_t b) { "
+            "  return %s(%s(a) * %s(b)); "
+            "}\n",
+            from_f32, to_f32, to_f32);
+        p += len;
+    }
+
+    /* 检测并注入 kdiv */
+    if (strstr(code, "kdiv")) {
+        int len = snprintf(p, end - p,
+            "uint16_t kdiv(uint16_t a, uint16_t b) { "
+            "  return %s(%s(a) / %s(b)); "
+            "}\n",
+            from_f32, to_f32, to_f32);
+        p += len;
+    }
+
+    /* 检测并注入比较函数 */
+    if (strstr(code, "klt")) {
+        int len = snprintf(p, end - p,
+            "bool klt(uint16_t a, uint16_t b) { "
+            "  return %s(a) < %s(b); "
+            "}\n",
+            to_f32, to_f32);
+        p += len;
+    }
+    if (strstr(code, "kle")) {
+        int len = snprintf(p, end - p,
+            "bool kle(uint16_t a, uint16_t b) { "
+            "  return %s(a) <= %s(b); "
+            "}\n",
+            to_f32, to_f32);
+        p += len;
+    }
+    if (strstr(code, "kgt")) {
+        int len = snprintf(p, end - p,
+            "bool kgt(uint16_t a, uint16_t b) { "
+            "  return %s(a) > %s(b); "
+            "}\n",
+            to_f32, to_f32);
+        p += len;
+    }
+    if (strstr(code, "kge")) {
+        int len = snprintf(p, end - p,
+            "bool kge(uint16_t a, uint16_t b) { "
+            "  return %s(a) >= %s(b); "
+            "}\n",
+            to_f32, to_f32);
+        p += len;
+    }
+
+    /* 将注入的函数插入到输出代码中 */
+    if (inject_buf[0] != '\0') {
+        char* temp = (char*)malloc(strlen(out) + strlen(inject_buf) + 10);
+        if (temp) {
+            strcpy(temp, inject_buf);
+            strcat(temp, "\n");
+            strcat(temp, out);
+            strcpy(out, temp);
+            free(temp);
+        }
+    }
+}
+
+/* ============================================================================
+ * 内核函数宏（只定义宏，具体函数动态注入）
+ * ============================================================================ */
+
+static const char* vk_get_kernel_macros(ace_dtype_t dtype) {
+    static char macros_buf[8192];
+    int use_native = vk_supports_native_storage(dtype);
+    
+    if (!use_native && (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16)) {
+        /* 模拟模式 - 只定义常量，函数动态注入 */
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* 模拟模式 - kxxx 函数动态注入 */\n"
+            "#define K_ZERO uint16_t(0u)\n"
+            "#define K_ONE uint16_t(%s)\n"
+            "#define K_NEG_ONE uint16_t(%s)\n",
+            (dtype == ACE_DTYPE_FLOAT16) ? "0x3C00u" : "0x3F80u",
+            (dtype == ACE_DTYPE_FLOAT16) ? "0xBC00u" : "0xBF80u");
+    } else if (!use_native && (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8)) {
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* INT8/UINT8 模拟 */\n"
+            "#define kadd(a, b) uint8_t(((a) + (b)) & 0xFFu)\n"
+            "#define ksub(a, b) uint8_t(((a) - (b)) & 0xFFu)\n"
+            "#define kmul(a, b) uint8_t(((a) * (b)) & 0xFFu)\n"
+            "#define kdiv(a, b) uint8_t(((a) / (b)) & 0xFFu)\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO uint8_t(0u)\n"
+            "#define K_ONE uint8_t(1u)\n"
+            "#define K_NEG_ONE uint8_t(255u)\n");
+    } else if (!use_native && dtype == ACE_DTYPE_INT16) {
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* INT16 模拟 */\n"
+            "#define kadd(a, b) uint16_t(((a) + (b)) & 0xFFFFu)\n"
+            "#define ksub(a, b) uint16_t(((a) - (b)) & 0xFFFFu)\n"
+            "#define kmul(a, b) uint16_t(((a) * (b)) & 0xFFFFu)\n"
+            "#define kdiv(a, b) uint16_t(((a) / (b)) & 0xFFFFu)\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO uint16_t(0u)\n"
+            "#define K_ONE uint16_t(1u)\n"
+            "#define K_NEG_ONE uint16_t(65535u)\n");
+    } else {
+        /* 原生模式 */
+        const char* type_name = vk_get_compute_type_name(dtype);
+        snprintf(macros_buf, sizeof(macros_buf),
+            "/* 原生类型内核函数宏 */\n"
+            "#define kadd(a, b) ((a) + (b))\n"
+            "#define ksub(a, b) ((a) - (b))\n"
+            "#define kmul(a, b) ((a) * (b))\n"
+            "#define kdiv(a, b) ((a) / (b))\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (%s)0\n"
+            "#define K_ONE (%s)1\n"
+            "#define K_NEG_ONE (%s)-1\n",
+            type_name, type_name, type_name);
+    }
+    return macros_buf;
+}
+
+/* ============================================================================
+ * 代码翻译主函数
+ * ============================================================================ */
+
+char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
+                           int* n_buffers, int* n_scalars) {
+    (void)name;
     const char* body_start = strchr(src, '{');
     const char* body_end = strrchr(src, '}');
     if (!body_start || !body_end) {
@@ -182,13 +344,9 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
 
     size_t body_len = body_end - body_start - 1;
     int use_native = vk_supports_native_storage(dtype);
-    /* Buffer 类型：根据数据类型选择正确的存储类型 */
     const char* buffer_type = use_native ? vk_get_buffer_type_name(dtype) :
         (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16 || dtype == ACE_DTYPE_INT16 ? "uint16_t" :
          dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8 ? "uint8_t" : "uint");
-    
-    /* 模拟类型的计算类型（使用 uint 进行中间计算） */
-    const char* compute_type = use_native ? vk_get_compute_type_name(dtype) : "uint";
 
     typedef struct {
         char name[64];
@@ -204,49 +362,38 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     if (p) {
         p++;
         while (*p && *p != ')') {
-            while (*p == ' ' || *p == '\t' || *p == '\n') p++;
-            if (*p == ')') break;
+            while (*p && (*p == ' ' || *p == '\t' || *p == '\n')) p++;
+            if (*p == ')' || *p == '{') break;
 
-            const char* star = strchr(p, '*');
-            const char* comma = strchr(p, ',');
-            const char* paren = strchr(p, ')');
-            const char* end = comma ? (paren && paren < comma ? paren : comma) : paren;
+            param_info_t* param = &params[n_params];
+            char* dst = param->name;
+            int is_ptr = 0;
 
-            if (star && (!end || star < end)) {
-                params[n_params].is_buffer = 1;
-                const char* name_start = star + 1;
-                while (*name_start == ' ' || *name_start == '\t') name_start++;
-                const char* name_end = end;
-                while (name_end > name_start && (*(name_end-1) == ' ' || *(name_end-1) == '\t')) name_end--;
-                size_t len = name_end - name_start;
-                if (len >= sizeof(params[n_params].name)) len = sizeof(params[n_params].name) - 1;
-                strncpy(params[n_params].name, name_start, len);
-                params[n_params].name[len] = '\0';
-                (*n_buffers)++;
-            } else {
-                params[n_params].is_buffer = 0;
-                const char* type_end = end;
-                while (type_end > p && *(type_end-1) != ' ' && *(type_end-1) != '\t') type_end--;
-                if (type_end == p) type_end = end;
-                const char* name_start = type_end;
-                while (*name_start == ' ' || *name_start == '\t') name_start++;
-                const char* name_end = end;
-                while (name_end > name_start && (*(name_end-1) == ' ' || *(name_end-1) == '\t')) name_end--;
-                size_t len = name_end - name_start;
-                if (len >= sizeof(params[n_params].name)) len = sizeof(params[n_params].name) - 1;
-                strncpy(params[n_params].name, name_start, len);
-                params[n_params].name[len] = '\0';
-                (*n_scalars)++;
+            while (*p && *p != ',' && *p != ')' && n_params < 16) {
+                if (*p == '*') {
+                    is_ptr = 1;
+                    p++;
+                    continue;
+                }
+                if (*p != ' ' && *p != '\t' && *p != '\n' && *p != '&') {
+                    *dst++ = *p;
+                }
+                p++;
             }
+            *dst = '\0';
+
+            param->is_buffer = is_ptr;
+            if (is_ptr) (*n_buffers)++;
+            else (*n_scalars)++;
             n_params++;
 
-            if (comma && comma < paren) p = comma + 1;
-            else p = end;
+            if (*p == ',') p++;
         }
     }
 
-    if (*n_buffers == 0) *n_buffers = 1;
-    if (*n_buffers > 8) *n_buffers = 8;
+    const char* extensions = vk_get_glsl_extension(dtype);
+    const char* converters = get_type_converters(dtype);
+    const char* kernel_macros = vk_get_kernel_macros(dtype);
 
     char push_constants[1024] = "";
     char pc_access[1024] = "";
@@ -257,8 +404,6 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
                 char line[128];
-                /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
-                /* 模拟模式下使用 buffer_type 以匹配 buffer 类型 */
                 const char* scalar_type = (scalar_idx == 0) ? "int" : buffer_type;
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
@@ -287,17 +432,22 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         }
     }
 
-    char* body = (char*)malloc(body_len + 1);
-    strncpy(body, body_start + 1, body_len);
-    body[body_len] = '\0';
-
-    const char* extensions = vk_get_glsl_extension(dtype);
+    /* 动态检测内核代码中使用的 kxxx 函数 */
+    int need_converters = 0;
+    if (!use_native && (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16)) {
+        if (strstr(src, "kadd") || strstr(src, "ksub") || strstr(src, "kmul") ||
+            strstr(src, "kdiv") || strstr(src, "klt") || strstr(src, "kle") ||
+            strstr(src, "kgt") || strstr(src, "kge") || strstr(src, "keq") ||
+            strstr(src, "kne")) {
+            need_converters = 1;
+        }
+    }
 
     /* 类型定义和内核函数宏 */
     const char* type_defs = "";
     static char type_defs_buf[8192];
     
-    if (!use_native) {
+    if (!use_native && (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16)) {
         /* 模拟模式 - 需要启用 16/8 位类型扩展 */
         snprintf(type_defs_buf, sizeof(type_defs_buf),
             "/* 启用 16/8 位类型扩展 */\n"
@@ -306,7 +456,7 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
             "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n");
         
         /* 添加类型定义和运算函数 */
-        char func_defs[2048] = "";
+        char func_defs[4096] = "";
         
         if (dtype == ACE_DTYPE_BFLOAT16) {
             snprintf(func_defs, sizeof(func_defs),
@@ -328,22 +478,7 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
                 "    if (exp == 255u) return uint16_t(sign | 0x7F80u);\n"
                 "    return uint16_t(sign | (exp << 7u) | man);\n"
-                "}\n"
-                "uint16_t bf16_add(uint16_t a, uint16_t b) { \n"
-                "    float fa = bf16_to_f32(a);\n"
-                "    float fb = bf16_to_f32(b);\n"
-                "    return f32_to_bf16(fa + fb); \n"
-                "}\n"
-                "uint16_t bf16_mul(uint16_t a, uint16_t b) { \n"
-                "    float fa = bf16_to_f32(a);\n"
-                "    float fb = bf16_to_f32(b);\n"
-                "    float result = fa * fb;\n"
-                "    return f32_to_bf16(result); \n"
-                "}\n"
-                "#define kadd(a, b) bf16_add(a, b)\n"
-                "#define kmul(a, b) bf16_mul(a, b)\n"
-                "#define K_ZERO uint16_t(0u)\n"
-                "#define K_ONE uint16_t(0x3F80u)\n");
+                "}\n");
         } else if (dtype == ACE_DTYPE_FLOAT16) {
             snprintf(func_defs, sizeof(func_defs),
                 "/* FP16 模拟 */\n"
@@ -364,71 +499,40 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
                 "    if (exp > 30u) return uint16_t(sign | 0x7C00u);\n"
                 "    return uint16_t(sign | (exp << 10u) | man);\n"
-                "}\n"
-                "uint16_t f16_add(uint16_t a, uint16_t b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
-                "uint16_t f16_mul(uint16_t a, uint16_t b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
-                "#define kadd(a, b) f16_add(a, b)\n"
-                "#define kmul(a, b) f16_mul(a, b)\n"
-                "#define K_ZERO uint16_t(0u)\n"
-                "#define K_ONE uint16_t(0x3C00u)\n");
-        } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
-            snprintf(func_defs, sizeof(func_defs),
-                "/* INT8/UINT8 模拟 */\n"
-                "#define kadd(a, b) uint8_t(((a) + (b)) & 0xFFu)\n"
-                "#define kmul(a, b) uint8_t(((a) * (b)) & 0xFFu)\n"
-                "#define K_ZERO uint8_t(0u)\n"
-                "#define K_ONE uint8_t(1u)\n");
-        } else if (dtype == ACE_DTYPE_INT16) {
-            snprintf(func_defs, sizeof(func_defs),
-                "/* INT16 模拟 */\n"
-                "#define kadd(a, b) uint16_t(((a) + (b)) & 0xFFFFu)\n"
-                "#define kmul(a, b) uint16_t(((a) * (b)) & 0xFFFFu)\n"
-                "#define K_ZERO uint16_t(0u)\n"
-                "#define K_ONE uint16_t(1u)\n");
+                "}\n");
         }
         
         /* 合并扩展声明和函数定义 */
         strncat(type_defs_buf, func_defs, sizeof(type_defs_buf) - strlen(type_defs_buf) - 1);
+        type_defs = type_defs_buf;
     } else {
-        /* 原生模式 - kadd/kmul 直接展开为运算符 */
-        snprintf(type_defs_buf, sizeof(type_defs_buf),
-            "/* 原生类型内核函数宏 */\n"
-            "#define kadd(a, b) ((a) + (b))\n"
-            "#define ksub(a, b) ((a) - (b))\n"
-            "#define kmul(a, b) ((a) * (b))\n"
-            "#define kdiv(a, b) ((a) / (b))\n"
-            "#define klt(a, b) ((a) < (b))\n"
-            "#define kle(a, b) ((a) <= (b))\n"
-            "#define kgt(a, b) ((a) > (b))\n"
-            "#define kge(a, b) ((a) >= (b))\n"
-            "#define keq(a, b) ((a) == (b))\n"
-            "#define kne(a, b) ((a) != (b))\n"
-            "#define K_ZERO (%s)0\n"
-            "#define K_ONE (%s)1\n"
-            "#define K_NEG_ONE (%s)-1\n",
-            vk_get_compute_type_name(dtype),
-            vk_get_compute_type_name(dtype),
-            vk_get_compute_type_name(dtype));
-    }
-    type_defs = type_defs_buf;
-
-    /* 动态检测内核代码中使用的 kxxx 函数 */
-    int need_type_defs = 0;
-    if (strstr(body, "kadd") || strstr(body, "ksub") || strstr(body, "kmul") ||
-        strstr(body, "kdiv") || strstr(body, "klt") || strstr(body, "kle") ||
-        strstr(body, "kgt") || strstr(body, "kge") || strstr(body, "keq") ||
-        strstr(body, "kne") || strstr(body, "K_ZERO") || strstr(body, "K_ONE")) {
-        need_type_defs = 1;
+        type_defs = kernel_macros;
     }
 
-    size_t defs_len = need_type_defs ? strlen(type_defs) : 0;
-    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + defs_len + strlen(body);
+    char* body = (char*)malloc(body_len + 1);
+    strncpy(body, body_start + 1, body_len);
+    body[body_len] = '\0';
+
+    /* 动态检测是否需要注入 kxxx 函数 */
+    int need_inject = 0;
+    if (!use_native && (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16)) {
+        if (strstr(body, "kadd") || strstr(body, "ksub") || strstr(body, "kmul") ||
+            strstr(body, "kdiv") || strstr(body, "klt") || strstr(body, "kle") ||
+            strstr(body, "kgt") || strstr(body, "kge")) {
+            need_inject = 1;
+        }
+    }
+
+    size_t defs_len = need_inject ? strlen(type_defs) : 0;
+    size_t conv_len = need_converters ? strlen(converters) : 0;
+    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + defs_len + conv_len + strlen(body);
     char* out = (char*)malloc(len);
 
     snprintf(out, len,
         "#version 450\n"
         "%s"
         "\nlayout(local_size_x = 256) in;\n"
+        "%s"
         "%s"
         "%s"
         "%s"
@@ -441,14 +545,18 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         "%s"
         "}\n",
         extensions,
-        need_type_defs ? type_defs : "",
+        need_inject ? type_defs : "",
         buffers,
         push_constants,
         pc_access,
+        need_converters ? converters : "",
         body);
+
+    /* 动态注入实际使用到的 kxxx 函数 */
+    if (need_inject) {
+        inject_used_k_functions(out, len, body, dtype);
+    }
 
     free(body);
     return out;
 }
-
-#endif /* VULKAN_AVAILABLE */
