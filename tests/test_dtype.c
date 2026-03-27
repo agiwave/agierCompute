@@ -226,6 +226,18 @@ static int verify_result(void* h_a, void* h_b, void* h_c, int idx,
         default: return 0;
     }
 
+    /* 处理无符号整数减法的溢出回绕 */
+    if (!cfg->is_float && !cfg->is_signed && op == OP_SUB && expected < 0) {
+        /* 对于无符号类型，负数结果会回绕 */
+        double max_val = 0.0;
+        if (cfg->dtype == ACE_DTYPE_UINT8) {
+            max_val = 256.0;
+        }
+        if (max_val > 0) {
+            expected = max_val + expected;  /* 回绕到正数 */
+        }
+    }
+
     double diff = fabs(c - expected);
     return (diff <= cfg->tolerance) ? 1 : 0;
 }
