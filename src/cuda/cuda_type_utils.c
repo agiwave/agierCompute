@@ -74,6 +74,12 @@ const char* cuda_get_kernel_macros(ace_dtype_t dtype) {
             "#define ksub(a, b) bf16_sub(a, b)\n"
             "#define kmul(a, b) bf16_mul(a, b)\n"
             "#define kdiv(a, b) bf16_div(a, b)\n"
+            "#define klt(a, b) bf16_lt(a, b)\n"
+            "#define kle(a, b) bf16_le(a, b)\n"
+            "#define kgt(a, b) bf16_gt(a, b)\n"
+            "#define kge(a, b) bf16_ge(a, b)\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
             "#define K_ZERO __float2bfloat16(0.0f)\n"
             "#define K_ONE __float2bfloat16(1.0f)\n"
             "#define K_NEG_ONE __float2bfloat16(-1.0f)\n");
@@ -103,7 +109,7 @@ const char* cuda_get_kernel_macros(ace_dtype_t dtype) {
 
 /* 类型辅助函数代码 */
 static const char* get_type_helpers(ace_dtype_t dtype) {
-    static char helpers_buf[2048];
+    static char helpers_buf[8192];
 
     if (dtype == ACE_DTYPE_FLOAT16) {
         /* FP16: 使用 float 转换进行运算，避免 __hadd 等弃用函数 */
@@ -147,14 +153,26 @@ static const char* get_type_helpers(ace_dtype_t dtype) {
             "__device__ inline __nv_bfloat16 bf16_add(__nv_bfloat16 a, __nv_bfloat16 b) { "
             "  return __float2bfloat16(__bfloat162float(a) + __bfloat162float(b)); "
             "}\n"
-            "__device__ inline __nv_bfloat16 bf16_mul(__nv_bfloat16 a, __nv_bfloat16 b) { "
-            "  return __float2bfloat16(__bfloat162float(a) * __bfloat162float(b)); "
-            "}\n"
             "__device__ inline __nv_bfloat16 bf16_sub(__nv_bfloat16 a, __nv_bfloat16 b) { "
             "  return __float2bfloat16(__bfloat162float(a) - __bfloat162float(b)); "
             "}\n"
+            "__device__ inline __nv_bfloat16 bf16_mul(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __float2bfloat16(__bfloat162float(a) * __bfloat162float(b)); "
+            "}\n"
             "__device__ inline __nv_bfloat16 bf16_div(__nv_bfloat16 a, __nv_bfloat16 b) { "
             "  return __float2bfloat16(__bfloat162float(a) / __bfloat162float(b)); "
+            "}\n"
+            "__device__ inline bool bf16_lt(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __bfloat162float(a) < __bfloat162float(b); "
+            "}\n"
+            "__device__ inline bool bf16_le(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __bfloat162float(a) <= __bfloat162float(b); "
+            "}\n"
+            "__device__ inline bool bf16_gt(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __bfloat162float(a) > __bfloat162float(b); "
+            "}\n"
+            "__device__ inline bool bf16_ge(__nv_bfloat16 a, __nv_bfloat16 b) { "
+            "  return __bfloat162float(a) >= __bfloat162float(b); "
             "}\n");
         return helpers_buf;
     }
@@ -221,8 +239,21 @@ char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) 
 
     size_t body_len = body_end - body_start - 1;
 
+    /* 动态检测内核代码中使用的 kxxx 函数 */
+    int need_helpers = 0;
+    if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16) {
+        /* 检查是否使用了任何 kxxx 函数 */
+        if (strstr(code, "kadd") || strstr(code, "ksub") || strstr(code, "kmul") ||
+            strstr(code, "kdiv") || strstr(code, "klt") || strstr(code, "kle") ||
+            strstr(code, "kgt") || strstr(code, "kge") || strstr(code, "keq") ||
+            strstr(code, "kne") || strstr(code, "K_ZERO") || strstr(code, "K_ONE")) {
+            need_helpers = 1;
+        }
+    }
+
+    size_t helpers_len = need_helpers ? strlen(type_helpers) : 0;
     size_t total_len = strlen(name) + params_len + body_len + 1024 +
-                       strlen(type_headers) + strlen(type_macros) + strlen(type_helpers) + strlen(kernel_macros);
+                       strlen(type_headers) + strlen(type_macros) + strlen(kernel_macros) + helpers_len;
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
@@ -238,8 +269,8 @@ char* cuda_translate_code(const char* name, const char* src, ace_dtype_t dtype) 
         "    %.*s\n"
         "}\n",
         type_headers,
+        need_helpers ? type_helpers : "",
         kernel_macros,
-        type_helpers,
         type_macros,
         name, params,
         (int)body_len, body_start + 1

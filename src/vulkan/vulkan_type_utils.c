@@ -295,7 +295,7 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
 
     /* 类型定义和内核函数宏 */
     const char* type_defs = "";
-    static char type_defs_buf[2048];
+    static char type_defs_buf[8192];
     
     if (!use_native) {
         /* 模拟模式 - 需要启用 16/8 位类型扩展 */
@@ -412,13 +412,23 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     }
     type_defs = type_defs_buf;
 
-    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + strlen(type_defs) + strlen(body);
+    /* 动态检测内核代码中使用的 kxxx 函数 */
+    int need_type_defs = 0;
+    if (strstr(body, "kadd") || strstr(body, "ksub") || strstr(body, "kmul") ||
+        strstr(body, "kdiv") || strstr(body, "klt") || strstr(body, "kle") ||
+        strstr(body, "kgt") || strstr(body, "kge") || strstr(body, "keq") ||
+        strstr(body, "kne") || strstr(body, "K_ZERO") || strstr(body, "K_ONE")) {
+        need_type_defs = 1;
+    }
+
+    size_t defs_len = need_type_defs ? strlen(type_defs) : 0;
+    size_t len = 8192 + strlen(buffers) + strlen(push_constants) + strlen(pc_access) + defs_len + strlen(body);
     char* out = (char*)malloc(len);
 
     snprintf(out, len,
         "#version 450\n"
         "%s"
-        "layout(local_size_x = 256) in;\n"
+        "\nlayout(local_size_x = 256) in;\n"
         "%s"
         "%s"
         "%s"
@@ -431,7 +441,7 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         "%s"
         "}\n",
         extensions,
-        type_defs,
+        need_type_defs ? type_defs : "",
         buffers,
         push_constants,
         pc_access,

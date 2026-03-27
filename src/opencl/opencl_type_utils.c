@@ -60,7 +60,7 @@ const char* ocl_get_extension(ace_dtype_t dtype) {
 
 /* 获取 kadd/kmul 等内核函数宏和常量定义 */
 const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
-    static char macros_buf[1024];
+    static char macros_buf[4096];
     extern ocl_device_extensions_t g_device_exts;
     
     if (dtype == ACE_DTYPE_FLOAT16 && !g_device_exts.has_fp16) {
@@ -86,11 +86,26 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "    return sign | (exp << 10u) | man;\n"
             "}\n"
             "ushort f16_add(ushort a, ushort b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
+            "ushort f16_sub(ushort a, ushort b) { return f32_to_f16(f16_to_f32(a) - f16_to_f32(b)); }\n"
             "ushort f16_mul(ushort a, ushort b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
+            "ushort f16_div(ushort a, ushort b) { return f32_to_f16(f16_to_f32(a) / f16_to_f32(b)); }\n"
+            "bool f16_lt(ushort a, ushort b) { return f16_to_f32(a) < f16_to_f32(b); }\n"
+            "bool f16_le(ushort a, ushort b) { return f16_to_f32(a) <= f16_to_f32(b); }\n"
+            "bool f16_gt(ushort a, ushort b) { return f16_to_f32(a) > f16_to_f32(b); }\n"
+            "bool f16_ge(ushort a, ushort b) { return f16_to_f32(a) >= f16_to_f32(b); }\n"
             "#define kadd(a, b) f16_add(a, b)\n"
+            "#define ksub(a, b) f16_sub(a, b)\n"
             "#define kmul(a, b) f16_mul(a, b)\n"
-            "#define K_ZERO 0u\n"
-            "#define K_ONE 0x3C00u\n");
+            "#define kdiv(a, b) f16_div(a, b)\n"
+            "#define klt(a, b) f16_lt(a, b)\n"
+            "#define kle(a, b) f16_le(a, b)\n"
+            "#define kgt(a, b) f16_gt(a, b)\n"
+            "#define kge(a, b) f16_ge(a, b)\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (ushort)0u\n"
+            "#define K_ONE (ushort)0x3C00u\n"
+            "#define K_NEG_ONE (ushort)0xBC00u\n");
     } else if (dtype == ACE_DTYPE_BFLOAT16) {
         /* BF16 模拟模式 - 使用 ushort 存储 */
         snprintf(macros_buf, sizeof(macros_buf),
@@ -114,25 +129,58 @@ const char* ocl_get_kernel_macros(ace_dtype_t dtype) {
             "    return sign | (exp << 7u) | man;\n"
             "}\n"
             "ushort bf16_add(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
+            "ushort bf16_sub(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) - bf16_to_f32(b)); }\n"
             "ushort bf16_mul(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
+            "ushort bf16_div(ushort a, ushort b) { return f32_to_bf16(bf16_to_f32(a) / bf16_to_f32(b)); }\n"
+            "bool bf16_lt(ushort a, ushort b) { return bf16_to_f32(a) < bf16_to_f32(b); }\n"
+            "bool bf16_le(ushort a, ushort b) { return bf16_to_f32(a) <= bf16_to_f32(b); }\n"
+            "bool bf16_gt(ushort a, ushort b) { return bf16_to_f32(a) > bf16_to_f32(b); }\n"
+            "bool bf16_ge(ushort a, ushort b) { return bf16_to_f32(a) >= bf16_to_f32(b); }\n"
             "#define kadd(a, b) bf16_add(a, b)\n"
+            "#define ksub(a, b) bf16_sub(a, b)\n"
             "#define kmul(a, b) bf16_mul(a, b)\n"
-            "#define K_ZERO 0u\n"
-            "#define K_ONE 0x3F80u\n");
+            "#define kdiv(a, b) bf16_div(a, b)\n"
+            "#define klt(a, b) bf16_lt(a, b)\n"
+            "#define kle(a, b) bf16_le(a, b)\n"
+            "#define kgt(a, b) bf16_gt(a, b)\n"
+            "#define kge(a, b) bf16_ge(a, b)\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (ushort)0u\n"
+            "#define K_ONE (ushort)0x3F80u\n"
+            "#define K_NEG_ONE (ushort)0xBF80u\n");
     } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
         snprintf(macros_buf, sizeof(macros_buf),
             "/* INT8/UINT8 内核函数宏 */\n"
             "#define kadd(a, b) (((a) + (b)) & 0xFFu)\n"
+            "#define ksub(a, b) (((a) - (b)) & 0xFFu)\n"
             "#define kmul(a, b) (((a) * (b)) & 0xFFu)\n"
-            "#define K_ZERO 0u\n"
-            "#define K_ONE 1u\n");
+            "#define kdiv(a, b) (((a) / (b)) & 0xFFu)\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (uchar)0u\n"
+            "#define K_ONE (uchar)1u\n"
+            "#define K_NEG_ONE (uchar)255u\n");
     } else if (dtype == ACE_DTYPE_INT16) {
         snprintf(macros_buf, sizeof(macros_buf),
             "/* INT16 内核函数宏 */\n"
             "#define kadd(a, b) (((a) + (b)) & 0xFFFFu)\n"
+            "#define ksub(a, b) (((a) - (b)) & 0xFFFFu)\n"
             "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n"
-            "#define K_ZERO 0u\n"
-            "#define K_ONE 1u\n");
+            "#define kdiv(a, b) (((a) / (b)) & 0xFFFFu)\n"
+            "#define klt(a, b) ((a) < (b))\n"
+            "#define kle(a, b) ((a) <= (b))\n"
+            "#define kgt(a, b) ((a) > (b))\n"
+            "#define kge(a, b) ((a) >= (b))\n"
+            "#define keq(a, b) ((a) == (b))\n"
+            "#define kne(a, b) ((a) != (b))\n"
+            "#define K_ZERO (ushort)0u\n"
+            "#define K_ONE (ushort)1u\n"
+            "#define K_NEG_ONE (ushort)65535u\n");
     } else if (dtype == ACE_DTYPE_FLOAT16 && g_device_exts.has_fp16) {
         /* FP16 原生模式 - 设备支持 cl_khr_fp16 */
         snprintf(macros_buf, sizeof(macros_buf),
@@ -290,15 +338,24 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
 
     size_t body_len = body_end - body_start - 1;
 
-    /* kernel_macros 已经包含了所有需要的函数定义和宏 */
+    /* 动态检测内核代码中使用的 kxxx 函数 */
+    int need_macros = 0;
+    if (strstr(code, "kadd") || strstr(code, "ksub") || strstr(code, "kmul") ||
+        strstr(code, "kdiv") || strstr(code, "klt") || strstr(code, "kle") ||
+        strstr(code, "kgt") || strstr(code, "kge") || strstr(code, "keq") ||
+        strstr(code, "kne") || strstr(code, "K_ZERO") || strstr(code, "K_ONE")) {
+        need_macros = 1;
+    }
+
+    size_t macros_len = need_macros ? strlen(kernel_macros) : 0;
     size_t total_len = strlen(name) + params_len + body_len + 1024 +
-                       strlen(extension) + strlen(kernel_macros);
+                       strlen(extension) + macros_len;
     char* out = (char*)malloc(total_len);
 
     snprintf(out, total_len,
         "%s"
         "%s"
-        "__kernel void %s%s\n"
+        "\n__kernel void %s%s\n"
         "{\n"
         "    int GID = get_global_id(0);\n"
         "    int LID = get_local_id(0);\n"
@@ -306,7 +363,7 @@ char* ocl_translate_code(const char* name, const char* src, ace_dtype_t dtype) {
         "    %.*s\n"
         "}\n",
         extension,
-        kernel_macros,
+        need_macros ? kernel_macros : "",
         name, params,
         (int)body_len, body_start + 1
     );

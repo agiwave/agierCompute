@@ -39,22 +39,11 @@ ACE_KERNEL(vec_mul,
     }
 )
 
-/* 除法 (FP16/BF16 需要特殊处理，避免比较歧义) */
+/* 除法 (简化版) */
 ACE_KERNEL(vec_div,
     void vec_div(int n, T* a, T* b, T* c) {
         int i = GID;
-        if (i < n) {
-            T denom = b[i];
-            /* 使用 kgt 比较避免类型转换歧义 */
-            T abs_denom = klt(denom, K_ZERO) ? ksub(K_ZERO, denom) : denom;
-            T threshold = K_ONE;  /* 简化：假设输入不会太小 */
-            for (int j = 0; j < 10; j++) {
-                threshold = kmul(threshold, T(0.1));
-            }
-            if (kgt(abs_denom, threshold)) {
-                c[i] = kdiv(a[i], b[i]);
-            }
-        }
+        if (i < n) c[i] = kdiv(a[i], b[i]);
     }
 )
 
@@ -213,6 +202,13 @@ static void init_test_data(void* data_a, void* data_b, int N, dtype_config_t* cf
     if (cfg->dtype == ACE_DTYPE_FLOAT16 || cfg->dtype == ACE_DTYPE_BFLOAT16) {
         int is_bf16 = (cfg->dtype == ACE_DTYPE_BFLOAT16);
         init_data_fp16((uint16_t*)data_a, (uint16_t*)data_b, N, cfg->test_scale, is_bf16);
+    } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
+        double* a = (double*)data_a;
+        double* b = (double*)data_b;
+        for (int i = 0; i < N; i++) {
+            a[i] = ((i % 10) * cfg->test_scale * 0.1);
+            b[i] = (((i * 2) % 10) * cfg->test_scale * 0.1);
+        }
     } else if (cfg->is_float) {
         float* a = (float*)data_a;
         float* b = (float*)data_b;
@@ -310,6 +306,14 @@ static int verify_results(void* h_a, void* h_b, void* h_c, int N,
                     double fc = (double)bfloat16_to_float(c[i]);
                     double expected = fa + fb;
                     if (fabs(fc - expected) > cfg->tolerance) ok = 0;
+                }
+            } else if (cfg->dtype == ACE_DTYPE_FLOAT64) {
+                double* a = (double*)h_a;
+                double* b = (double*)h_b;
+                double* c = (double*)h_c;
+                for (int i = 0; i < check_count && ok; i++) {
+                    double expected = a[i] + b[i];
+                    if (fabs(c[i] - expected) > cfg->tolerance) ok = 0;
                 }
             } else if (cfg->is_float) {
                 float* a = (float*)h_a;
@@ -587,10 +591,17 @@ static int test_op(ace_device_t dev, dtype_config_t* cfg, math_op_t op) {
     op_config_t* op_cfg = &op_configs[op];
     
     if (op == OP_SCALE) {
-        float alpha = 2.0f;
-        err = ace_kernel_invoke(dev, kernel, cfg->dtype, N,
-                                (void*[]){&N, &alpha, buf_a, buf_c},
-                                (int[]){sizeof(int), sizeof(float), 0, 0}, 4);
+        if (cfg->dtype == ACE_DTYPE_FLOAT64) {
+            double alpha = 2.0;
+            err = ace_kernel_invoke(dev, kernel, cfg->dtype, N,
+                                    (void*[]){&N, &alpha, buf_a, buf_c},
+                                    (int[]){sizeof(int), sizeof(double), 0, 0}, 4);
+        } else {
+            float alpha = 2.0f;
+            err = ace_kernel_invoke(dev, kernel, cfg->dtype, N,
+                                    (void*[]){&N, &alpha, buf_a, buf_c},
+                                    (int[]){sizeof(int), sizeof(float), 0, 0}, 4);
+        }
     } else if (op_cfg->num_inputs == 2) {
         err = ace_kernel_invoke(dev, kernel, cfg->dtype, N,
                                 (void*[]){&N, buf_a, buf_b, buf_c},
