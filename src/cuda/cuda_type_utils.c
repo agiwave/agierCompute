@@ -115,11 +115,25 @@ const char* cuda_get_type_headers(ace_dtype_t dtype) {
 const char* cuda_get_type_macros(ace_dtype_t dtype) {
     static char macros_buf[1024];
     const char* type_name = cuda_get_type_name(dtype);
-    snprintf(macros_buf, sizeof(macros_buf),
-        "#define K_ZERO (%s)0\n"
-        "#define K_ONE (%s)1\n"
-        "#define K_NEG_ONE (%s)-1\n",
-        type_name, type_name, type_name);
+    
+    /* BF16 需要使用特殊的宏定义，避免类型转换歧义 */
+    if (dtype == ACE_DTYPE_BFLOAT16) {
+        snprintf(macros_buf, sizeof(macros_buf),
+            "#define K_ZERO __float2bfloat16(0.0f)\n"
+            "#define K_ONE __float2bfloat16(1.0f)\n"
+            "#define K_NEG_ONE __float2bfloat16(-1.0f)\n");
+    } else if (dtype == ACE_DTYPE_FLOAT16) {
+        snprintf(macros_buf, sizeof(macros_buf),
+            "#define K_ZERO __float2half(0.0f)\n"
+            "#define K_ONE __float2half(1.0f)\n"
+            "#define K_NEG_ONE __float2half(-1.0f)\n");
+    } else {
+        snprintf(macros_buf, sizeof(macros_buf),
+            "#define K_ZERO (%s)0\n"
+            "#define K_ONE (%s)1\n"
+            "#define K_NEG_ONE (%s)-1\n",
+            type_name, type_name, type_name);
+    }
     return macros_buf;
 }
 
@@ -180,39 +194,85 @@ static int inject_k_function_impl(char* buf, const char* func_name, ace_dtype_t 
     } else {
         /* 非原生支持：注入模拟函数 */
         const char* type_name = cuda_get_type_name(dtype);
-        const char* to_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f16_to_f32" : "bf16_to_f32";
-        const char* from_f32 = (dtype == ACE_DTYPE_FLOAT16) ? "f32_to_f16" : "f32_to_bf16";
         
-        if (strcmp(func_name, "kadd") == 0)
-            return sprintf(buf, "__device__ inline %s kadd(%s a, %s b) { return %s(%s(a) + %s(b)); }\n",
-                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        if (strcmp(func_name, "ksub") == 0)
-            return sprintf(buf, "__device__ inline %s ksub(%s a, %s b) { return %s(%s(a) - %s(b)); }\n",
-                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        if (strcmp(func_name, "kmul") == 0)
-            return sprintf(buf, "__device__ inline %s kmul(%s a, %s b) { return %s(%s(a) * %s(b)); }\n",
-                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        if (strcmp(func_name, "kdiv") == 0)
-            return sprintf(buf, "__device__ inline %s kdiv(%s a, %s b) { return %s(%s(a) / %s(b)); }\n",
-                          type_name, type_name, type_name, from_f32, to_f32, to_f32);
-        if (strcmp(func_name, "klt") == 0)
-            return sprintf(buf, "__device__ inline bool klt(%s a, %s b) { return %s(a) < %s(b); }\n",
-                          type_name, type_name, to_f32, to_f32);
-        if (strcmp(func_name, "kle") == 0)
-            return sprintf(buf, "__device__ inline bool kle(%s a, %s b) { return %s(a) <= %s(b); }\n",
-                          type_name, type_name, to_f32, to_f32);
-        if (strcmp(func_name, "kgt") == 0)
-            return sprintf(buf, "__device__ inline bool kgt(%s a, %s b) { return %s(a) > %s(b); }\n",
-                          type_name, type_name, to_f32, to_f32);
-        if (strcmp(func_name, "kge") == 0)
-            return sprintf(buf, "__device__ inline bool kge(%s a, %s b) { return %s(a) >= %s(b); }\n",
-                          type_name, type_name, to_f32, to_f32);
-        if (strcmp(func_name, "keq") == 0)
-            return sprintf(buf, "__device__ inline bool keq(%s a, %s b) { return %s(a) == %s(b); }\n",
-                          type_name, type_name, to_f32, to_f32);
-        if (strcmp(func_name, "kne") == 0)
-            return sprintf(buf, "__device__ inline bool kne(%s a, %s b) { return %s(a) != %s(b); }\n",
-                          type_name, type_name, to_f32, to_f32);
+        /* 根据数据类型选择正确的转换函数 */
+        const char* to_f32 = NULL;
+        const char* from_f32 = NULL;
+        
+        if (dtype == ACE_DTYPE_FLOAT16) {
+            to_f32 = "f16_to_f32";
+            from_f32 = "f32_to_f16";
+        } else if (dtype == ACE_DTYPE_BFLOAT16) {
+            to_f32 = "bf16_to_f32";
+            from_f32 = "f32_to_bf16";
+        }
+        /* INT8/INT16 等类型不需要转换函数，直接使用运算符 */
+        
+        if (to_f32 && from_f32) {
+            /* FP16/BF16 需要转换函数 */
+            if (strcmp(func_name, "kadd") == 0)
+                return sprintf(buf, "__device__ inline %s kadd(%s a, %s b) { return %s(%s(a) + %s(b)); }\n",
+                              type_name, type_name, type_name, from_f32, to_f32, to_f32);
+            if (strcmp(func_name, "ksub") == 0)
+                return sprintf(buf, "__device__ inline %s ksub(%s a, %s b) { return %s(%s(a) - %s(b)); }\n",
+                              type_name, type_name, type_name, from_f32, to_f32, to_f32);
+            if (strcmp(func_name, "kmul") == 0)
+                return sprintf(buf, "__device__ inline %s kmul(%s a, %s b) { return %s(%s(a) * %s(b)); }\n",
+                              type_name, type_name, type_name, from_f32, to_f32, to_f32);
+            if (strcmp(func_name, "kdiv") == 0)
+                return sprintf(buf, "__device__ inline %s kdiv(%s a, %s b) { return %s(%s(a) / %s(b)); }\n",
+                              type_name, type_name, type_name, from_f32, to_f32, to_f32);
+            if (strcmp(func_name, "klt") == 0)
+                return sprintf(buf, "__device__ inline bool klt(%s a, %s b) { return %s(a) < %s(b); }\n",
+                              type_name, type_name, to_f32, to_f32);
+            if (strcmp(func_name, "kle") == 0)
+                return sprintf(buf, "__device__ inline bool kle(%s a, %s b) { return %s(a) <= %s(b); }\n",
+                              type_name, type_name, to_f32, to_f32);
+            if (strcmp(func_name, "kgt") == 0)
+                return sprintf(buf, "__device__ inline bool kgt(%s a, %s b) { return %s(a) > %s(b); }\n",
+                              type_name, type_name, to_f32, to_f32);
+            if (strcmp(func_name, "kge") == 0)
+                return sprintf(buf, "__device__ inline bool kge(%s a, %s b) { return %s(a) >= %s(b); }\n",
+                              type_name, type_name, to_f32, to_f32);
+            if (strcmp(func_name, "keq") == 0)
+                return sprintf(buf, "__device__ inline bool keq(%s a, %s b) { return %s(a) == %s(b); }\n",
+                              type_name, type_name, to_f32, to_f32);
+            if (strcmp(func_name, "kne") == 0)
+                return sprintf(buf, "__device__ inline bool kne(%s a, %s b) { return %s(a) != %s(b); }\n",
+                              type_name, type_name, to_f32, to_f32);
+        } else {
+            /* INT8/INT16 等类型直接使用运算符 */
+            if (strcmp(func_name, "kadd") == 0)
+                return sprintf(buf, "__device__ inline %s kadd(%s a, %s b) { return (a) + (b); }\n",
+                              type_name, type_name, type_name);
+            if (strcmp(func_name, "ksub") == 0)
+                return sprintf(buf, "__device__ inline %s ksub(%s a, %s b) { return (a) - (b); }\n",
+                              type_name, type_name, type_name);
+            if (strcmp(func_name, "kmul") == 0)
+                return sprintf(buf, "__device__ inline %s kmul(%s a, %s b) { return (a) * (b); }\n",
+                              type_name, type_name, type_name);
+            if (strcmp(func_name, "kdiv") == 0)
+                return sprintf(buf, "__device__ inline %s kdiv(%s a, %s b) { return (a) / (b); }\n",
+                              type_name, type_name, type_name);
+            if (strcmp(func_name, "klt") == 0)
+                return sprintf(buf, "__device__ inline bool klt(%s a, %s b) { return (a) < (b); }\n",
+                              type_name, type_name);
+            if (strcmp(func_name, "kle") == 0)
+                return sprintf(buf, "__device__ inline bool kle(%s a, %s b) { return (a) <= (b); }\n",
+                              type_name, type_name);
+            if (strcmp(func_name, "kgt") == 0)
+                return sprintf(buf, "__device__ inline bool kgt(%s a, %s b) { return (a) > (b); }\n",
+                              type_name, type_name);
+            if (strcmp(func_name, "kge") == 0)
+                return sprintf(buf, "__device__ inline bool kge(%s a, %s b) { return (a) >= (b); }\n",
+                              type_name, type_name);
+            if (strcmp(func_name, "keq") == 0)
+                return sprintf(buf, "__device__ inline bool keq(%s a, %s b) { return (a) == (b); }\n",
+                              type_name, type_name);
+            if (strcmp(func_name, "kne") == 0)
+                return sprintf(buf, "__device__ inline bool kne(%s a, %s b) { return (a) != (b); }\n",
+                              type_name, type_name);
+        }
     }
     return 0;
 }
@@ -280,27 +340,34 @@ static void scan_and_inject(char** out, const char* code, ace_dtype_t dtype, int
 
     /* 将注入的函数插入到输出代码中 - 在类型定义之后，内核函数之前 */
     if (p > inject_buf) {
-        /* 查找类型定义结束的位置 */
+        /* 查找注入位置 */
         char* insert_pos = NULL;
+        
         if (!is_native) {
             /* 非原生支持：在类型定义之后注入 */
             /* 找到类型转换函数定义的结束位置 */
-            const char* end_marker = (dtype == ACE_DTYPE_FLOAT16) ? 
-                "f16_to_f32(half h) { return __half2float(h); }\n" : 
-                "bf16_to_f32(__nv_bfloat16 h) { return __bfloat162float(h); }\n";
-            char* func_end = strstr(*out, end_marker);
-            if (func_end) {
-                insert_pos = func_end + strlen(end_marker);
+            const char* end_marker = NULL;
+            if (dtype == ACE_DTYPE_FLOAT16) {
+                end_marker = "f16_to_f32(half h) { return __half2float(h); }\n";
+            } else if (dtype == ACE_DTYPE_BFLOAT16) {
+                end_marker = "bf16_to_f32(__nv_bfloat16 h) { return __bfloat162float(h); }\n";
+            }
+            
+            if (end_marker) {
+                char* func_end = strstr(*out, end_marker);
+                if (func_end) {
+                    insert_pos = func_end + strlen(end_marker);
+                }
             }
         }
-        
+
         /* 如果找不到类型定义，就在 extern 之前注入 */
         if (!insert_pos) {
             insert_pos = strstr(*out, "extern \"C\"");
         }
         /* 如果还找不到，就在开头注入 */
         if (!insert_pos) insert_pos = *out;
-        
+
         /* 在 insert_pos 位置注入 kxxx 函数 */
         size_t prefix_len = insert_pos - *out;
         size_t new_len = strlen(*out) + strlen(inject_buf) + 10;
