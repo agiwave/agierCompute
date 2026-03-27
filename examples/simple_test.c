@@ -41,6 +41,7 @@ int main() {
 
             /* 测试向量加法 */
             const int N = 8;
+            int n = N;
             float h_a[] = {1, 2, 3, 4, 5, 6, 7, 8};
             float h_b[] = {10, 20, 30, 40, 50, 60, 70, 80};
             float h_c[8];
@@ -54,7 +55,7 @@ int main() {
             ACE_CHECK(ace_buffer_write(buf_b, h_b, N * sizeof(float)));
 
             /* 使用 ACE_INVOKE 宏执行内核 */
-            ACE_INVOKE(dev, test_vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+            ACE_INVOKE(dev, test_vec_add, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
             ace_finish(dev);
 
             ACE_CHECK(ace_buffer_read(buf_c, h_c, N * sizeof(float)));

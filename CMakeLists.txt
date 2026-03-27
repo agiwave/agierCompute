@@ -18,8 +18,8 @@ project(AgierCompute
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# C++ 标准
-set(CMAKE_CXX_STANDARD 11)
+# C++ 标准 (需要 C++20 支持 designated initializer)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 输出目录配置

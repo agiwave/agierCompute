@@ -8,6 +8,12 @@
 #include <string.h>
 #include <stdio.h>
 
+/* ============================================================================
+ * Configuration constants
+ * ============================================================================ */
+
+#define MAX_INVOKE_ARGS 32
+
 /* Global kernel templates */
 kernel_template_t g_templates[MAX_TEMPLATES];
 int g_template_count = 0;
@@ -46,12 +52,17 @@ ace_error_t ace_kernel_invoke(ace_device_t dev, ace_kernel_t kernel,
     kernel_template_t* tmpl = engine_get_template(kernel);
     if (!tmpl) return ACE_ERROR_COMPILE;
 
+    /* 参数数量检查 */
+    if (nargs > MAX_INVOKE_ARGS) {
+        fprintf(stderr, "[ACE] Too many arguments (%d > %d)\n", nargs, MAX_INVOKE_ARGS);
+        return ACE_ERROR_INVALID;
+    }
+
     /* 处理参数，找到第一个 buffer 所属的设备 */
-    void* processed_args[16];
-    size_t arg_sizes[16];
+    void* processed_args[MAX_INVOKE_ARGS];
+    size_t arg_sizes[MAX_INVOKE_ARGS];
     ace_device_t actual_dev = dev;
 
-    if (nargs > 16) nargs = 16;
     for (int i = 0; i < nargs; i++) {
         if (sizes[i] <= 0) {
             struct ace_buffer_* buf = (struct ace_buffer_*)args[i];
@@ -91,11 +102,16 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
     kernel_template_t* tmpl = engine_get_template(kernel);
     if (!tmpl) return ACE_ERROR_COMPILE;
 
-    void* processed_args[16];
-    size_t arg_sizes[16];
+    /* 参数数量检查 */
+    if (nargs > MAX_INVOKE_ARGS) {
+        fprintf(stderr, "[ACE] Too many arguments (%d > %d)\n", nargs, MAX_INVOKE_ARGS);
+        return ACE_ERROR_INVALID;
+    }
+
+    void* processed_args[MAX_INVOKE_ARGS];
+    size_t arg_sizes[MAX_INVOKE_ARGS];
     ace_device_t actual_dev = dev;
 
-    if (nargs > 16) nargs = 16;
     for (int i = 0; i < nargs; i++) {
         if (sizes[i] <= 0) {
             struct ace_buffer_* buf = (struct ace_buffer_*)args[i];

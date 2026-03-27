@@ -484,15 +484,15 @@ static inline const char* ace_error_string(ace_error_t err) {
     #define _ACE_SIZES_6(a1,a2,a3,a4,a5,a6) _ACE_SIZES_5(a1,a2,a3,a4,a5),ACE_INVOKE_ARGSIZE(a6)
     #define _ACE_SIZES_7(a1,a2,a3,a4,a5,a6,a7) _ACE_SIZES_6(a1,a2,a3,a4,a5,a6),ACE_INVOKE_ARGSIZE(a7)
     #define _ACE_SIZES_8(a1,a2,a3,a4,a5,a6,a7,a8) _ACE_SIZES_7(a1,a2,a3,a4,a5,a6,a7),ACE_INVOKE_ARGSIZE(a8)
-    
-    /* 主宏 */
+
+    /* 主宏 - 使用 GNU C 语句表达式，可返回值 */
     #define ACE_INVOKE(dev, kernel_name, dtype, n, ...) \
-        do { \
+        ({ \
             void* _args[] = {__VA_ARGS__}; \
             int _sizes[] = {_ACE_CAT(_ACE_SIZES_, _ACE_NARGS(__VA_ARGS__))(__VA_ARGS__)}; \
             int _nargs = (int)(sizeof(_args) / sizeof(_args[0])); \
             ace_kernel_invoke(dev, _ace_get_##kernel_name(), dtype, n, _args, _sizes, _nargs); \
-        } while(0)
+        })
 #endif
 
 #endif /* ACE_H */

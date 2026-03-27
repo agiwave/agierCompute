@@ -5,12 +5,14 @@
 #include "engine_internal.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
     #include <windows.h>
 #else
     #include <dirent.h>
+    #include <unistd.h>
 #endif
 
 /* Global engine state definition */
@@ -127,6 +129,12 @@ void engine_auto_init(void) {
     if (g_engine.inited || g_engine.auto_init_attempted) return;
     g_engine.auto_init_attempted = 1;
 
+    /* 首先检查环境变量指定的后端目录 */
+    const char* backend_dir = getenv("ACE_BACKEND_DIR");
+    if (backend_dir) {
+        engine_scan_dir(backend_dir);
+    }
+
 #ifdef _WIN32
     char exe_path[MAX_PATH];
     GetModuleFileNameA(NULL, exe_path, MAX_PATH);
@@ -136,10 +144,6 @@ void engine_auto_init(void) {
         engine_scan_dir(exe_path);
     }
 #else
-    const char* search_dirs[] = {
-        NULL, "./lib", "./bin", "../lib", "../bin", NULL
-    };
-
     char exe_path[1024] = {0};
     ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
     if (len > 0) {
@@ -147,15 +151,27 @@ void engine_auto_init(void) {
         char* last_slash = strrchr(exe_path, '/');
         if (last_slash) {
             *last_slash = '\0';
-            search_dirs[0] = exe_path;
+            /* 优先搜索可执行文件所在目录 */
+            engine_scan_dir(exe_path);
         }
     }
 
-    for (int i = 0; search_dirs[i] != NULL; i++) {
-        engine_scan_dir(search_dirs[i]);
+    /* 搜索标准安装目录 */
+    const char* std_dirs[] = {
+        "./lib", "./bin",
+        "../lib", "../bin",
+        "/usr/lib", "/usr/lib64",
+        "/usr/local/lib", "/usr/local/lib64",
+        NULL
+    };
+
+    for (int i = 0; std_dirs[i] != NULL; i++) {
+        engine_scan_dir(std_dirs[i]);
     }
-    engine_scan_dir(".");
 #endif
+
+    /* 最后搜索当前目录 */
+    engine_scan_dir(".");
 
     g_engine.inited = 1;
 }

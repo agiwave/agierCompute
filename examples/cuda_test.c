@@ -48,6 +48,7 @@ int main() {
     printf("--- Test: vec_add (float) ---\n");
     {
         const int N = 1000;
+        int n = N;
         float *h_a = malloc(N * sizeof(float));
         float *h_b = malloc(N * sizeof(float));
         float *h_c = malloc(N * sizeof(float));
@@ -65,7 +66,7 @@ int main() {
         ace_buffer_write(buf_a, h_a, N * sizeof(float));
         ace_buffer_write(buf_b, h_b, N * sizeof(float));
 
-        ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+        ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
         ace_finish(dev);
         ace_buffer_read(buf_c, h_c, N * sizeof(float));
 
@@ -88,6 +89,7 @@ int main() {
     printf("--- Test: scale (float) ---\n");
     {
         const int N = 100;
+        int n = N;
         float *h_in = malloc(N * sizeof(float));
         float *h_out = malloc(N * sizeof(float));
         float alpha = 2.5f;
@@ -99,7 +101,7 @@ int main() {
         ace_buffer_alloc(dev, N * sizeof(float), &buf_out);
         ace_buffer_write(buf_in, h_in, N * sizeof(float));
 
-        ACE_INVOKE(dev, scale, ACE_DTYPE_FLOAT32, N, &N, &alpha, buf_in, buf_out);
+        ACE_INVOKE(dev, scale, ACE_DTYPE_FLOAT32, N, &n, &alpha, buf_in, buf_out);
         ace_finish(dev);
         ace_buffer_read(buf_out, h_out, N * sizeof(float));
 

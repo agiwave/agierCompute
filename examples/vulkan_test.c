@@ -21,6 +21,7 @@ int test_device(ace_device_t dev, int idx) {
     printf("Device %d: %s\n", idx, props.name);
 
     const int N = 100;
+    int n = N;
     float *h_a = malloc(N * sizeof(float));
     float *h_b = malloc(N * sizeof(float));
     float *h_c = malloc(N * sizeof(float));
@@ -41,7 +42,7 @@ int test_device(ace_device_t dev, int idx) {
     printf("  Running kernel... ");
     fflush(stdout);
 
-    ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+    ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
 
     printf("OK\n");
     ace_finish(dev);

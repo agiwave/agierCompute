@@ -55,6 +55,7 @@ static void test_vec_mul(ace_device_t dev) {
     printf("\n--- Test: vec_mul ---\n");
 
     const int N = 6;
+    int n = N;
     float h_a[] = {1, 2, 3, 4, 5, 6};
     float h_b[] = {2, 3, 4, 5, 6, 7};
     float h_c[6];
@@ -68,8 +69,7 @@ static void test_vec_mul(ace_device_t dev) {
     ACE_CHECK_VOID(ace_buffer_write(buf_b, h_b, N * sizeof(float)));
 
     /* 使用简化宏 */
-    int n = N;
-    ACE_INVOKE(dev, kernel_vec_mul, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+    ACE_INVOKE(dev, kernel_vec_mul, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_c, h_c, N * sizeof(float)));
@@ -102,7 +102,7 @@ static void test_sigmoid(ace_device_t dev) {
 
     /* 使用简化宏 */
     int n = N;
-    ACE_INVOKE(dev, kernel_sigmoid, ACE_DTYPE_FLOAT32, N, &N, buf_in, buf_out);
+    ACE_INVOKE(dev, kernel_sigmoid, ACE_DTYPE_FLOAT32, N, &n, buf_in, buf_out);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_out, h_out, N * sizeof(float)));
@@ -152,6 +152,7 @@ static void test_sqrt(ace_device_t dev) {
     printf("\n--- Test: sqrt ---\n");
 
     const int N = 5;
+    int n = N;
     float h_in[] = {1, 4, 9, 16, 25};
     float h_out[5];
 
@@ -161,8 +162,7 @@ static void test_sqrt(ace_device_t dev) {
     ACE_CHECK_VOID(ace_buffer_write(buf_in, h_in, N * sizeof(float)));
 
     /* 使用简化宏 */
-    int n = N;
-    ACE_INVOKE(dev, kernel_sqrt, ACE_DTYPE_FLOAT32, N, &N, buf_in, buf_out);
+    ACE_INVOKE(dev, kernel_sqrt, ACE_DTYPE_FLOAT32, N, &n, buf_in, buf_out);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_out, h_out, N * sizeof(float)));
@@ -181,6 +181,7 @@ static void test_exp(ace_device_t dev) {
     printf("\n--- Test: exp ---\n");
 
     const int N = 4;
+    int n = N;
     float h_in[] = {0, 1, 2, 3};
     float h_out[4];
 
@@ -190,8 +191,7 @@ static void test_exp(ace_device_t dev) {
     ACE_CHECK_VOID(ace_buffer_write(buf_in, h_in, N * sizeof(float)));
 
     /* 使用简化宏 */
-    int n = N;
-    ACE_INVOKE(dev, kernel_exp, ACE_DTYPE_FLOAT32, N, &N, buf_in, buf_out);
+    ACE_INVOKE(dev, kernel_exp, ACE_DTYPE_FLOAT32, N, &n, buf_in, buf_out);
     ace_finish(dev);
 
     ACE_CHECK_VOID(ace_buffer_read(buf_out, h_out, N * sizeof(float)));

@@ -38,6 +38,7 @@ int main() {
     printf("\n");
 
     const int N = 100;
+    int n = N;
     float h_a[N], h_b[N], h_c[N];
     for (int i = 0; i < N; i++) {
         h_a[i] = i * 1.0f;
@@ -48,24 +49,27 @@ int main() {
     printf("Allocating buffers...\n");
     ace_error_t err = ace_buffer_alloc(dev, N * sizeof(float), &buf_a);
     printf("  buf_a: %s\n", err == ACE_OK ? "OK" : "FAIL");
-    
+
     err = ace_buffer_alloc(dev, N * sizeof(float), &buf_b);
     printf("  buf_b: %s\n", err == ACE_OK ? "OK" : "FAIL");
-    
+
     err = ace_buffer_alloc(dev, N * sizeof(float), &buf_c);
     printf("  buf_c: %s\n", err == ACE_OK ? "OK" : "FAIL");
 
     printf("\nWriting data...\n");
     err = ace_buffer_write(buf_a, h_a, N * sizeof(float));
     printf("  write a: %s\n", err == ACE_OK ? "OK" : "FAIL");
-    
+
     err = ace_buffer_write(buf_b, h_b, N * sizeof(float));
     printf("  write b: %s\n", err == ACE_OK ? "OK" : "FAIL");
 
     printf("\nCompiling kernel...\n");
 
     printf("Launching kernel...\n");
-    ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &N, buf_a, buf_b, buf_c);
+    err = ACE_INVOKE(dev, vec_add, ACE_DTYPE_FLOAT32, N, &n, buf_a, buf_b, buf_c);
+    if (err != ACE_OK) {
+        printf("[OpenCL] kernel_launch failed: err=%d\n", err);
+    }
 
     printf("\nSyncing...\n");
     ace_finish(dev);
@@ -82,6 +86,9 @@ int main() {
     for (int i = 0; i < 10; i++) {
         if (h_c[i] != h_a[i] + h_b[i]) { pass = 0; break; }
     }
+    
+    if (err != ACE_OK) pass = 0;
+    
     printf("\n%s\n", pass ? "PASS" : "FAIL");
 
     ace_buffer_free(buf_a);

@@ -9,8 +9,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <nvrtc.h>
 
 ace_error_t cuda_init(ace_backend_info_t* info) {
+    (void)info;
     CUresult err = cuInit(0);
     if (err != CUDA_SUCCESS) {
         printf("[CUDA] cuInit failed: %d\n", err);
