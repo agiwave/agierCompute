@@ -182,8 +182,13 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
 
     size_t body_len = body_end - body_start - 1;
     int use_native = vk_supports_native_storage(dtype);
-    /* Buffer 类型：模拟模式统一使用 uint 存储（简化实现） */
-    const char* buffer_type = use_native ? vk_get_buffer_type_name(dtype) : "uint";
+    /* Buffer 类型：根据数据类型选择正确的存储类型 */
+    const char* buffer_type = use_native ? vk_get_buffer_type_name(dtype) :
+        (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_BFLOAT16 || dtype == ACE_DTYPE_INT16 ? "uint16_t" :
+         dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8 ? "uint8_t" : "uint");
+    
+    /* 模拟类型的计算类型（使用 uint 进行中间计算） */
+    const char* compute_type = use_native ? vk_get_compute_type_name(dtype) : "uint";
 
     typedef struct {
         char name[64];
@@ -252,9 +257,9 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
         for (int i = 0; i < n_params; i++) {
             if (!params[i].is_buffer) {
                 char line[128];
-                /* 所有标量参数 4 字节对齐（Vulkan push constants 要求） */
-                /* 第一个参数 n 使用 int，其他使用 uint */
-                const char* scalar_type = (scalar_idx == 0) ? "int" : "uint";
+                /* 第一个标量参数 (n) 总是 int，后续根据数据类型决定 */
+                /* 模拟模式下使用 buffer_type 以匹配 buffer 类型 */
+                const char* scalar_type = (scalar_idx == 0) ? "int" : buffer_type;
                 snprintf(line, sizeof(line), "  %s s%d;\n", scalar_type, scalar_idx);
                 strcat(push_constants, line);
                 char access[128];
@@ -293,11 +298,20 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
     static char type_defs_buf[2048];
     
     if (!use_native) {
-        /* 模拟模式 - 定义自定义类型和 kadd/kmul 宏 */
+        /* 模拟模式 - 需要启用 16/8 位类型扩展 */
+        snprintf(type_defs_buf, sizeof(type_defs_buf),
+            "/* 启用 16/8 位类型扩展 */\n"
+            "#extension GL_EXT_shader_explicit_arithmetic_types : require\n"
+            "#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require\n"
+            "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require\n");
+        
+        /* 添加类型定义和运算函数 */
+        char func_defs[2048] = "";
+        
         if (dtype == ACE_DTYPE_BFLOAT16) {
-            snprintf(type_defs_buf, sizeof(type_defs_buf),
+            snprintf(func_defs, sizeof(func_defs),
                 "/* BF16 模拟 */\n"
-                "float bf16_to_f32(uint x) {\n"
+                "float bf16_to_f32(uint16_t x) {\n"
                 "    uint sign = (x >> 15) & 0x1u;\n"
                 "    uint exp = (x >> 7) & 0xFFu;\n"
                 "    uint man = x & 0x7Fu;\n"
@@ -306,25 +320,34 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 16u);\n"
                 "    return uintBitsToFloat(result);\n"
                 "}\n"
-                "uint f32_to_bf16(float x) {\n"
+                "uint16_t f32_to_bf16(float x) {\n"
                 "    uint u = floatBitsToUint(x);\n"
                 "    uint sign = (u >> 16u) & 0x8000u;\n"
                 "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
                 "    uint man = (u >> 16u) & 0x7Fu;\n"
-                "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
-                "    if (exp > 254u) return sign | 0x7F80u;\n"
-                "    return sign | (exp << 7u) | man;\n"
+                "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
+                "    if (exp > 254u) return uint16_t(sign | 0x7F80u);\n"
+                "    return uint16_t(sign | (exp << 7u) | man);\n"
                 "}\n"
-                "uint bf16_add(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) + bf16_to_f32(b)); }\n"
-                "uint bf16_mul(uint a, uint b) { return f32_to_bf16(bf16_to_f32(a) * bf16_to_f32(b)); }\n"
+                "uint16_t bf16_add(uint16_t a, uint16_t b) { \n"
+                "    float fa = bf16_to_f32(a);\n"
+                "    float fb = bf16_to_f32(b);\n"
+                "    return f32_to_bf16(fa + fb); \n"
+                "}\n"
+                "uint16_t bf16_mul(uint16_t a, uint16_t b) { \n"
+                "    float fa = bf16_to_f32(a);\n"
+                "    float fb = bf16_to_f32(b);\n"
+                "    float result = fa * fb;\n"
+                "    return f32_to_bf16(result); \n"
+                "}\n"
                 "#define kadd(a, b) bf16_add(a, b)\n"
                 "#define kmul(a, b) bf16_mul(a, b)\n"
-                "#define K_ZERO 0u\n"
-                "#define K_ONE 0x3F80u\n");
+                "#define K_ZERO uint16_t(0u)\n"
+                "#define K_ONE uint16_t(0x3F80u)\n");
         } else if (dtype == ACE_DTYPE_FLOAT16) {
-            snprintf(type_defs_buf, sizeof(type_defs_buf),
+            snprintf(func_defs, sizeof(func_defs),
                 "/* FP16 模拟 */\n"
-                "float f16_to_f32(uint x) {\n"
+                "float f16_to_f32(uint16_t x) {\n"
                 "    uint sign = (x >> 15u) & 0x1u;\n"
                 "    uint exp = (x >> 10u) & 0x1Fu;\n"
                 "    uint man = x & 0x3FFu;\n"
@@ -333,36 +356,39 @@ char* vk_translate_to_glsl(const char* name, const char* src, ace_dtype_t dtype,
                 "    uint result = (sign << 31u) | ((exp + 112u) << 23u) | (man << 13u);\n"
                 "    return uintBitsToFloat(result);\n"
                 "}\n"
-                "uint f32_to_f16(float x) {\n"
+                "uint16_t f32_to_f16(float x) {\n"
                 "    uint u = floatBitsToUint(x);\n"
                 "    uint sign = (u >> 16u) & 0x8000u;\n"
                 "    uint exp = ((u >> 23u) & 0xFFu) - 112u;\n"
                 "    uint man = (u >> 13u) & 0x3FFu;\n"
-                "    if ((u & 0x7FFFFFFFu) == 0u) return sign;\n"
-                "    if (exp > 30u) return sign | 0x7C00u;\n"
-                "    return sign | (exp << 10u) | man;\n"
+                "    if ((u & 0x7FFFFFFFu) == 0u) return uint16_t(sign);\n"
+                "    if (exp > 30u) return uint16_t(sign | 0x7C00u);\n"
+                "    return uint16_t(sign | (exp << 10u) | man);\n"
                 "}\n"
-                "uint f16_add(uint a, uint b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
-                "uint f16_mul(uint a, uint b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
+                "uint16_t f16_add(uint16_t a, uint16_t b) { return f32_to_f16(f16_to_f32(a) + f16_to_f32(b)); }\n"
+                "uint16_t f16_mul(uint16_t a, uint16_t b) { return f32_to_f16(f16_to_f32(a) * f16_to_f32(b)); }\n"
                 "#define kadd(a, b) f16_add(a, b)\n"
                 "#define kmul(a, b) f16_mul(a, b)\n"
-                "#define K_ZERO 0u\n"
-                "#define K_ONE 0x3C00u\n");
+                "#define K_ZERO uint16_t(0u)\n"
+                "#define K_ONE uint16_t(0x3C00u)\n");
         } else if (dtype == ACE_DTYPE_INT8 || dtype == ACE_DTYPE_UINT8) {
-            snprintf(type_defs_buf, sizeof(type_defs_buf),
+            snprintf(func_defs, sizeof(func_defs),
                 "/* INT8/UINT8 模拟 */\n"
-                "#define kadd(a, b) (((a) + (b)) & 0xFFu)\n"
-                "#define kmul(a, b) (((a) * (b)) & 0xFFu)\n"
-                "#define K_ZERO 0u\n"
-                "#define K_ONE 1u\n");
+                "#define kadd(a, b) uint8_t(((a) + (b)) & 0xFFu)\n"
+                "#define kmul(a, b) uint8_t(((a) * (b)) & 0xFFu)\n"
+                "#define K_ZERO uint8_t(0u)\n"
+                "#define K_ONE uint8_t(1u)\n");
         } else if (dtype == ACE_DTYPE_INT16) {
-            snprintf(type_defs_buf, sizeof(type_defs_buf),
+            snprintf(func_defs, sizeof(func_defs),
                 "/* INT16 模拟 */\n"
-                "#define kadd(a, b) (((a) + (b)) & 0xFFFFu)\n"
-                "#define kmul(a, b) (((a) * (b)) & 0xFFFFu)\n"
-                "#define K_ZERO 0u\n"
-                "#define K_ONE 1u\n");
+                "#define kadd(a, b) uint16_t(((a) + (b)) & 0xFFFFu)\n"
+                "#define kmul(a, b) uint16_t(((a) * (b)) & 0xFFFFu)\n"
+                "#define K_ZERO uint16_t(0u)\n"
+                "#define K_ONE uint16_t(1u)\n");
         }
+        
+        /* 合并扩展声明和函数定义 */
+        strncat(type_defs_buf, func_defs, sizeof(type_defs_buf) - strlen(type_defs_buf) - 1);
     } else {
         /* 原生模式 - kadd/kmul 直接展开为运算符 */
         snprintf(type_defs_buf, sizeof(type_defs_buf),

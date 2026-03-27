@@ -61,6 +61,10 @@ static ace_error_t create_pipeline(vk_device_internal_t* d, ace_kernel_def_t* ke
     k->n_buffers = *n_buffers;
     k->n_scalars = *n_scalars;
 
+    /* 调试输出 - 打印生成的 GLSL 代码 */
+    printf("[Vulkan] Generated GLSL for %s (dtype=%d):\n---\n%s\n---\n", 
+           kernel_def->name, dtype, glsl_src);
+
     /* 编译 SPIR-V */
     uint32_t* spirv = NULL;
     size_t spirv_size = 0;
@@ -307,18 +311,8 @@ ace_error_t vk_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     int push_count = 0;
     for (int i = 0; i < n && push_count < n_scalars && push_count < 8; i++) {
         if (sizes[i] > 0) {
-            /* 第一个标量参数 (n) 总是 int，后续根据内核类型 */
-            if (push_count == 0) {
-                push_values[push_count].i = *(int*)args[i];
-            } else if (dtype == ACE_DTYPE_FLOAT16 || dtype == ACE_DTYPE_FLOAT32 || dtype == ACE_DTYPE_FLOAT64) {
-                /* float16 在 host 侧使用 float 传递，在 shader 中转换 */
-                push_values[push_count].f = *(float*)args[i];
-            } else if (dtype == ACE_DTYPE_BFLOAT16) {
-                /* bfloat16 在 host 侧使用 uint16 传递 */
-                push_values[push_count].i = *(uint16_t*)args[i];
-            } else {
-                push_values[push_count].i = *(int*)args[i];
-            }
+            /* 所有参数统一按 4 字节传递，shader 内部会正确解释 */
+            push_values[push_count].i = *(int*)args[i];
             push_count++;
         }
     }
