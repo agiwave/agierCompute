@@ -81,6 +81,15 @@ add_executable(benchmark benchmark.c)
 target_include_directories(benchmark PRIVATE ${PROJECT_SOURCE_DIR}/include lib)
 target_link_libraries(benchmark PRIVATE ace_core ace_test m)
 
+# 12. 三维综合测试 - 多后端/多数据类型/多数学函数
+add_executable(comprehensive_test comprehensive_test.c)
+target_include_directories(comprehensive_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(comprehensive_test PRIVATE ace_core)
+else()
+    target_link_libraries(comprehensive_test PRIVATE ace_core m)
+endif()
+
 # =============================================================================
 # CTest 测试配置
 # =============================================================================
@@ -125,6 +134,13 @@ add_test(NAME All_DataTypes COMMAND test_all_dtypes)
 set_tests_properties(All_DataTypes PROPERTIES
     LABELS "All;DataTypes;CUDA;OpenCL;Vulkan;FP16;BF16"
     TIMEOUT 300
+)
+
+# 三维综合测试
+add_test(NAME Comprehensive_Test COMMAND comprehensive_test)
+set_tests_properties(Comprehensive_Test PROPERTIES
+    LABELS "All;Comprehensive;3D-Test"
+    TIMEOUT 600
 )
 
 # 示例程序测试
