@@ -373,6 +373,13 @@ ACE_API ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
 /* 等待设备上所有操作完成 */
 ACE_API ace_error_t ace_finish(ace_device_t dev);
 
+/* ----------------------------------------------------------------------------
+ * 资源清理
+ * ---------------------------------------------------------------------------- */
+
+/* 释放所有内核模板和引擎资源（程序退出前调用） */
+ACE_API void ace_cleanup(void);
+
 /* ============================================================================
  * 辅助函数
  * ============================================================================ */
@@ -402,7 +409,7 @@ static inline const char* ace_error_string(ace_error_t err) {
     #include <cassert>
     #include <type_traits>
     struct KInvoker {
-        static const int MAX_INVOKE_ARGS = 16;
+        static const int MAX_INVOKE_ARGS = 32;
         enum EInvokeArgType {
             EBuffer,
             EDataPointer,

@@ -137,3 +137,35 @@ ace_error_t ace_kernel_launch(ace_device_t dev, ace_kernel_t kernel,
                                             config ? config : &default_cfg,
                                             processed_args, arg_sizes, nargs);
 }
+
+void ace_cleanup(void) {
+    /* 释放所有内核模板内存 */
+    for (int i = 0; i < g_template_count; i++) {
+        if (g_templates[i].name) {
+            free(g_templates[i].name);
+            g_templates[i].name = NULL;
+        }
+        if (g_templates[i].src) {
+            free(g_templates[i].src);
+            g_templates[i].src = NULL;
+        }
+    }
+    g_template_count = 0;
+    
+    /* 关闭所有后端 */
+    for (int i = 0; i < g_engine.count; i++) {
+        if (g_engine.list[i].inited && g_engine.list[i].ops.shutdown) {
+            g_engine.list[i].ops.shutdown(g_engine.list[i].info);
+        }
+        if (g_engine.list[i].handle) {
+            CLOSE_LIB(g_engine.list[i].handle);
+            g_engine.list[i].handle = 0;
+        }
+        g_engine.list[i].inited = 0;
+    }
+    g_engine.count = 0;
+    g_engine.inited = 0;
+    g_engine.auto_init_attempted = 0;
+    
+    printf("[ACE] Cleanup complete\n");
+}

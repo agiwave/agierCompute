@@ -14,13 +14,26 @@
     #define LOAD_LIB(n)    LoadLibraryA(n)
     #define GET_SYM(h, n)  ((void*)GetProcAddress(h, n))
     #define CLOSE_LIB(h)   FreeLibrary(h)
+    /* Windows 互斥锁 */
+    typedef CRITICAL_SECTION ace_mutex_t;
+    #define ACE_MUTEX_INIT(m)    InitializeCriticalSection(&(m))
+    #define ACE_MUTEX_LOCK(m)    EnterCriticalSection(&(m))
+    #define ACE_MUTEX_UNLOCK(m)  LeaveCriticalSection(&(m))
+    #define ACE_MUTEX_DESTROY(m) DeleteCriticalSection(&(m))
 #else
     #include <dlfcn.h>
     #include <unistd.h>
+    #include <pthread.h>
     #define DYNLIB         void*
     #define LOAD_LIB(n)    dlopen(n, RTLD_NOW)
     #define GET_SYM(h, n)  dlsym(h, n)
     #define CLOSE_LIB(h)   dlclose(h)
+    /* POSIX 互斥锁 */
+    typedef pthread_mutex_t ace_mutex_t;
+    #define ACE_MUTEX_INIT(m)    pthread_mutex_init(&(m), NULL)
+    #define ACE_MUTEX_LOCK(m)    pthread_mutex_lock(&(m))
+    #define ACE_MUTEX_UNLOCK(m)  pthread_mutex_unlock(&(m))
+    #define ACE_MUTEX_DESTROY(m) pthread_mutex_destroy(&(m))
 #endif
 
 /* ============================================================================
@@ -62,6 +75,8 @@ typedef struct {
     int count;
     int inited;
     int auto_init_attempted;
+    ace_mutex_t mutex;
+    int mutex_initialized;
 } engine_state_t;
 
 extern engine_state_t g_engine;

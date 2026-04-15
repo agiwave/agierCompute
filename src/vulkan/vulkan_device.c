@@ -207,6 +207,10 @@ ace_error_t vk_device_props(void* dev, void* props) {
     strcpy(p->vendor, "Vulkan");
     p->total_memory = d->dev->mem_props.memoryHeaps[0].size;
     p->max_threads = d->dev->props.limits.maxComputeWorkGroupSize[0];
+    /* 使用 maxComputeWorkGroupInvocations 估算 compute units */
+    p->compute_units = (int)(d->dev->props.limits.maxComputeWorkGroupInvocations / 
+                             d->dev->props.limits.maxComputeWorkGroupSize[0]);
+    if (p->compute_units < 1) p->compute_units = 1;
     return ACE_OK;
 }
 

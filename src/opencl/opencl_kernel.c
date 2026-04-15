@@ -101,6 +101,11 @@ ace_error_t ocl_kernel_launch(void* dev, ace_kernel_def_t* kernel_def,
     size_t local[3] = { cfg->block[0], cfg->block[1], cfg->block[2] };
 
     cl_int err = clEnqueueNDRangeKernel(d->queue, cached->kernel, 3, NULL, global, local, 0, NULL, NULL);
+    
+    /* 同步等待内核执行完成，确保与 CUDA 后端行为一致 */
+    if (err == CL_SUCCESS) {
+        err = clFinish(d->queue);
+    }
 
     return (err == CL_SUCCESS) ? ACE_OK : ACE_ERROR_LAUNCH;
 }

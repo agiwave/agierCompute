@@ -18,8 +18,22 @@
 /* Global engine state definition */
 engine_state_t g_engine = {0};
 
+/* 确保互斥锁已初始化 */
+static void engine_ensure_mutex(void) {
+    if (!g_engine.mutex_initialized) {
+        ACE_MUTEX_INIT(g_engine.mutex);
+        g_engine.mutex_initialized = 1;
+    }
+}
+
 void engine_load_backend(const char* path) {
-    if (g_engine.count >= MAX_BACKENDS) return;
+    engine_ensure_mutex();
+    ACE_MUTEX_LOCK(g_engine.mutex);
+    
+    if (g_engine.count >= MAX_BACKENDS) {
+        ACE_MUTEX_UNLOCK(g_engine.mutex);
+        return;
+    }
 
     DYNLIB h = LOAD_LIB(path);
     if (!h) {
@@ -28,6 +42,7 @@ void engine_load_backend(const char* path) {
 #else
         printf("[ACE] Failed to load: %s (%s)\n", path, dlerror());
 #endif
+        ACE_MUTEX_UNLOCK(g_engine.mutex);
         return;
     }
 
@@ -40,12 +55,14 @@ void engine_load_backend(const char* path) {
     if (!get_backend) get_backend = (get_backend_fn)GET_SYM(h, "ace_backend_info");
     if (!get_backend) {
         CLOSE_LIB(h);
+        ACE_MUTEX_UNLOCK(g_engine.mutex);
         return;
     }
 
     ace_backend_info_t* info = get_backend();
     if (!info) {
         CLOSE_LIB(h);
+        ACE_MUTEX_UNLOCK(g_engine.mutex);
         return;
     }
 
@@ -53,6 +70,7 @@ void engine_load_backend(const char* path) {
     for (int i = 0; i < g_engine.count; i++) {
         if (g_engine.list[i].info->type == info->type) {
             CLOSE_LIB(h);
+            ACE_MUTEX_UNLOCK(g_engine.mutex);
             return;
         }
     }
@@ -60,6 +78,7 @@ void engine_load_backend(const char* path) {
     ace_backend_ops_t* ops = get_ops ? get_ops() : NULL;
     if (!ops) {
         CLOSE_LIB(h);
+        ACE_MUTEX_UNLOCK(g_engine.mutex);
         return;
     }
 
@@ -67,6 +86,7 @@ void engine_load_backend(const char* path) {
         ace_error_t err = ops->init(info);
         if (err != 0) {
             CLOSE_LIB(h);
+            ACE_MUTEX_UNLOCK(g_engine.mutex);
             return;
         }
     }
@@ -78,6 +98,8 @@ void engine_load_backend(const char* path) {
     g_engine.list[g_engine.count].handle = h;
     g_engine.list[g_engine.count].inited = 1;
     g_engine.count++;
+    
+    ACE_MUTEX_UNLOCK(g_engine.mutex);
 }
 
 #ifdef _WIN32
@@ -126,8 +148,16 @@ void engine_scan_dir(const char* dir) {
 #endif
 
 void engine_auto_init(void) {
-    if (g_engine.inited || g_engine.auto_init_attempted) return;
+    engine_ensure_mutex();
+    ACE_MUTEX_LOCK(g_engine.mutex);
+    
+    if (g_engine.inited || g_engine.auto_init_attempted) {
+        ACE_MUTEX_UNLOCK(g_engine.mutex);
+        return;
+    }
     g_engine.auto_init_attempted = 1;
+    
+    ACE_MUTEX_UNLOCK(g_engine.mutex);
 
     /* 首先检查环境变量指定的后端目录 */
     const char* backend_dir = getenv("ACE_BACKEND_DIR");
@@ -177,10 +207,17 @@ void engine_auto_init(void) {
 }
 
 backend_entry_t* engine_find_backend(ace_device_type_t type) {
+    engine_ensure_mutex();
+    ACE_MUTEX_LOCK(g_engine.mutex);
+    
+    backend_entry_t* result = NULL;
     for (int i = 0; i < g_engine.count; i++) {
         if (g_engine.list[i].info->type == (ace_backend_device_type_t)type) {
-            return &g_engine.list[i];
+            result = &g_engine.list[i];
+            break;
         }
     }
-    return NULL;
+    
+    ACE_MUTEX_UNLOCK(g_engine.mutex);
+    return result;
 }

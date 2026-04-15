@@ -29,40 +29,51 @@ if(CMAKE_CUDA_COMPILER)
         CUDA_AVAILABLE=1
     )
 
-    # 查找 NVRTC 库
-    find_library(NVRTC_LIB nvrtc
-        HINTS
-            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/lib/x64"
-            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.5/lib/x64"
-            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4/lib/x64"
-            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.3/lib/x64"
-            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/lib/x64"
-            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.1/lib/x64"
-            "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.0/lib/x64"
-            "C:/Program Files/NVIDIA Corporation/CUDA/v12.6/lib/x64"
-            /lib/x86_64-linux-gnu
-            /usr/lib/x86_64-linux-gnu
-            /usr/local/cuda/lib64
-            /usr/local/cuda/lib
-    )
-
-    if(NVRTC_LIB)
+    # 使用 find_package 自动检测 CUDA Toolkit
+    find_package(CUDAToolkit REQUIRED)
+    
+    # NVRTC 库
+    if(TARGET CUDA::nvrtc)
         target_compile_definitions(ace_be_cuda PRIVATE NVRTC_AVAILABLE=1)
-        target_link_libraries(ace_be_cuda PRIVATE ${NVRTC_LIB})
+        target_link_libraries(ace_be_cuda PRIVATE CUDA::nvrtc)
+    elseif(CUDA_nvrtc_LIBRARY)
+        target_compile_definitions(ace_be_cuda PRIVATE NVRTC_AVAILABLE=1)
+        target_link_libraries(ace_be_cuda PRIVATE ${CUDA_nvrtc_LIBRARY})
+    else()
+        # 回退：尝试在 CUDA_TOOLKIT_ROOT_DIR 中查找
+        find_library(NVRTC_LIB nvrtc
+            HINTS
+                "${CUDA_TOOLKIT_ROOT_DIR}/lib/x64"
+                "${CUDA_TOOLKIT_ROOT_DIR}/lib64"
+                "${CUDA_TOOLKIT_ROOT_DIR}/lib"
+        )
+        if(NVRTC_LIB)
+            target_compile_definitions(ace_be_cuda PRIVATE NVRTC_AVAILABLE=1)
+            target_link_libraries(ace_be_cuda PRIVATE ${NVRTC_LIB})
+        else()
+            message(WARNING "NVRTC library not found - runtime compilation disabled")
+        endif()
     endif()
 
-    # 链接 CUDA driver API
-    if(WIN32)
-        find_library(CUDA_DRIVER_LIB cuda
-            PATHS
-                "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/*/lib/x64"
-                "C:/Program Files/NVIDIA Corporation/CUDA/*/lib/x64"
-        )
-        if(CUDA_DRIVER_LIB)
-            target_link_libraries(ace_be_cuda PRIVATE ${CUDA_DRIVER_LIB})
-        endif()
+    # CUDA driver API
+    if(TARGET CUDA::cuda_driver)
+        target_link_libraries(ace_be_cuda PRIVATE CUDA::cuda_driver)
+    elseif(CUDA_cuda_driver_LIBRARY)
+        target_link_libraries(ace_be_cuda PRIVATE ${CUDA_cuda_driver_LIBRARY})
     else()
-        target_link_libraries(ace_be_cuda PRIVATE cuda)
+        # 回退：尝试直接链接
+        if(WIN32)
+            find_library(CUDA_DRIVER_LIB cuda
+                HINTS
+                    "${CUDA_TOOLKIT_ROOT_DIR}/lib/x64"
+                    "${CUDA_TOOLKIT_ROOT_DIR}/lib"
+            )
+            if(CUDA_DRIVER_LIB)
+                target_link_libraries(ace_be_cuda PRIVATE ${CUDA_DRIVER_LIB})
+            endif()
+        else()
+            target_link_libraries(ace_be_cuda PRIVATE cuda)
+        endif()
     endif()
 
     target_link_libraries(ace_be_cuda PRIVATE ace_core)
@@ -81,6 +92,8 @@ if(CMAKE_CUDA_COMPILER)
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
+    
+    message(STATUS "CUDA Toolkit found: ${CUDA_TOOLKIT_ROOT_DIR}")
 else()
     message(STATUS "CUDA compiler not found - CUDA backend disabled")
     add_library(ace_be_cuda INTERFACE)
