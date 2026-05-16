@@ -2,9 +2,6 @@
 # AgierCompute OpenCL Backend
 # =============================================================================
 
-include(CheckLanguage)
-check_language(OpenCL)
-
 find_package(OpenCL QUIET)
 
 if(OpenCL_FOUND)

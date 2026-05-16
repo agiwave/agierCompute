@@ -32,7 +32,10 @@ include(GNUInstallDirs)
 set(INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
 
 # 启用测试
-enable_testing()
+option(AGIER_BUILD_TESTS "Build AgierCompute tests" ON)
+if(AGIER_BUILD_TESTS)
+    enable_testing()
+endif()
 
 # =============================================================================
 # 编译选项
@@ -70,7 +73,9 @@ add_subdirectory(src/vulkan)
 add_subdirectory(examples)
 
 # 测试
-add_subdirectory(tests)
+if(AGIER_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
 
 # =============================================================================
 # 安装配置
